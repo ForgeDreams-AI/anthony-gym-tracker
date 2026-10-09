@@ -222,7 +222,7 @@ function workoutLogger() {
         '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + "</p></div>" +
         '<div class="working-weight"><strong>' + esc(formatWeight(e.current_weight)) + "</strong><span>" + esc(e.last_adjustment || "") + "</span></div>" +
       "</div>" +
-      '<div class="set-headings"><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div></article>"
+      '<div class="set-headings"><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div></article>'
     );
     for (var n = 1; n <= e.target_sets; n++) {
       card.appendChild(setRowEl(active, e, n, updateProgress));
