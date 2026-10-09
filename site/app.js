@@ -1,7 +1,7 @@
 "use strict";
 /* Anthony Gym Tracker — static front end, Google Sheet brain via Apps Script.
    SET THIS to the Apps Script web-app /exec URL after deploying Code.gs. */
-var API_URL = "";
+var API_URL = "https://script.google.com/macros/s/AKfycbxHm-_Qv4PcMFvwKQ7vC7fhrkzFCcK3vdIeNncOLb18Xm2Cia4HKj_M3LY9DUghOd4m0Q/exec";
 
 /* ---------------- state ---------------- */
 var D = null;            // dashboard payload
