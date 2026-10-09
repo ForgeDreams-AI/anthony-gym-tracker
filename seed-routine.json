@@ -1,0 +1,33 @@
+{
+  "workouts": [
+    {"key": "upper-a", "name": "Upper A", "emphasis": "Chest / lats emphasis", "exercises": [
+      {"name": "Barbell Bench Press", "target_sets": 3, "min_reps": 5, "max_reps": 8, "current_weight": 185, "increment": 5},
+      {"name": "Incline DB Press", "target_sets": 3, "min_reps": 8, "max_reps": 12, "current_weight": 60, "increment": 5},
+      {"name": "Lat Pulldown / Pull-ups", "target_sets": 3, "min_reps": 6, "max_reps": 10, "current_weight": 160, "increment": 5},
+      {"name": "Single-Arm Cable Row", "target_sets": 3, "min_reps": 8, "max_reps": 12, "current_weight": 85, "increment": 5},
+      {"name": "Seated DB Shoulder Press", "target_sets": 2, "min_reps": 8, "max_reps": 12, "current_weight": 50, "increment": 5},
+      {"name": "Cable Lateral Raise", "target_sets": 3, "min_reps": 12, "max_reps": 20, "current_weight": 12.5, "increment": 2.5},
+      {"name": "Single-Arm Cable Tricep Pushdown", "target_sets": 2, "min_reps": 10, "max_reps": 15, "current_weight": 27.5, "increment": 2.5},
+      {"name": "Overhead Cable Tricep Extension", "target_sets": 2, "min_reps": 10, "max_reps": 15, "current_weight": 45, "increment": 2.5},
+      {"name": "EZ-Bar Curl", "target_sets": 2, "min_reps": 8, "max_reps": 12, "current_weight": 90, "increment": 5},
+      {"name": "Cable T-Bar Curl", "target_sets": 2, "min_reps": 10, "max_reps": 15, "current_weight": 42.5, "increment": 2.5},
+      {"name": "Back Extension", "target_sets": 3, "min_reps": 10, "max_reps": 15, "current_weight": 44, "increment": 5},
+      {"name": "Hanging Knee-to-Chest", "target_sets": 3, "min_reps": 10, "max_reps": 15, "current_weight": 0, "increment": 5}
+    ]},
+    {"key": "upper-b", "name": "Upper B", "emphasis": "Back / shoulders / arms emphasis", "exercises": [
+      {"name": "Incline DB Press", "target_sets": 3, "min_reps": 6, "max_reps": 10, "current_weight": null, "increment": 5},
+      {"name": "Weighted Dips OR DB Fly", "target_sets": 2, "min_reps": 8, "max_reps": 12, "current_weight": null, "increment": 5},
+      {"name": "DB Row OR Gorilla Row", "target_sets": 3, "min_reps": 8, "max_reps": 12, "current_weight": null, "increment": 5},
+      {"name": "Lat Pulldown / Pull-ups", "target_sets": 3, "min_reps": 8, "max_reps": 12, "current_weight": null, "increment": 5},
+      {"name": "Military Press", "target_sets": 3, "min_reps": 6, "max_reps": 10, "current_weight": null, "increment": 5},
+      {"name": "Cable Lateral Raise", "target_sets": 3, "min_reps": 12, "max_reps": 20, "current_weight": null, "increment": 2.5},
+      {"name": "Face Pull OR Reverse Cable Fly", "target_sets": 2, "min_reps": 12, "max_reps": 20, "current_weight": null, "increment": 2.5},
+      {"name": "Cross-Body Cable Tricep Extension", "target_sets": 2, "min_reps": 10, "max_reps": 15, "current_weight": null, "increment": 2.5},
+      {"name": "Overhead Cable Tricep Extension", "target_sets": 2, "min_reps": 10, "max_reps": 15, "current_weight": null, "increment": 2.5},
+      {"name": "EZ-Bar Curl", "target_sets": 2, "min_reps": 8, "max_reps": 12, "current_weight": null, "increment": 5},
+      {"name": "Reverse-Grip EZ-Bar Curl", "target_sets": 2, "min_reps": 10, "max_reps": 15, "current_weight": null, "increment": 5},
+      {"name": "Romanian Deadlift", "target_sets": 3, "min_reps": 6, "max_reps": 10, "current_weight": null, "increment": 10},
+      {"name": "Cable Crunch", "target_sets": 3, "min_reps": 10, "max_reps": 15, "current_weight": null, "increment": 5}
+    ]}
+  ]
+}
