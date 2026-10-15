@@ -98,6 +98,10 @@ main { width: 100%; max-width: 980px; margin: 0 auto; padding-top: max(12px, env
 .set-row { padding: 5px 10px; border-top: 1px solid var(--border); min-height: 52px; }
 .set-number { display: grid; place-items: center; width: 27px; height: 27px; background: var(--metal-2); color: #fff; font-size: 11px; font-weight: 850; clip-path: polygon(0 0,100% 0,100% 76%,76% 100%,0 100%); }
 .set-row--done .set-number { background: var(--success); }
+.set-row--warmup { opacity: .8; }
+.set-row--warmup .set-number { background: var(--dim); font-size: 10px; }
+.warmup-static { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.warmup-static span { color: var(--dim); font-size: 9px; margin-left: 3px; font-weight: 600; }
 .field-label { background: var(--bg); border: 1px solid transparent; min-height: 38px; display: grid; grid-template-columns: 1fr auto; align-items: end; padding: 4px 7px 3px; }
 .field-label:focus-within { border-color: var(--accent); background: var(--surface-strong); }
 .field-label span { grid-column: 2; grid-row: 1; color: var(--dim); font-size: 9px; padding-bottom: 4px; }

@@ -74,7 +74,7 @@ function trainHome() {
     else if (!other) other = w;
   });
   if (!next) next = D.workouts[0];
-  if (!next) return emptyState("—", "Loading your routine.", "Your Upper A / Upper B rotation will be ready in a moment.");
+  if (!next) return emptyState("—", "Loading your routine.", "Your workout rotation will be ready in a moment.");
   var totalSets = next.exercises.reduce(function (s, e) { return s + e.target_sets; }, 0);
 
   var s = el("<section></section>");
@@ -138,6 +138,17 @@ function upsertLocalSet(active, exerciseId, setNumber, weight, reps) {
   var s = findSavedSet(active, exerciseId, setNumber);
   if (s) { s.weight = weight; s.reps = reps; }
   else active.sets.push({ exercise_id: exerciseId, set_number: setNumber, weight: weight, reps: reps });
+}
+
+function warmupRowEl(n, weight, reps) {
+  return el(
+    '<div class="set-row set-row--warmup">' +
+      '<div class="set-number">W' + n + "</div>" +
+      '<div class="warmup-static"><strong>' + weight + "</strong><span>lb</span></div>" +
+      '<div class="warmup-static"><strong>' + reps + "</strong><span>reps</span></div>" +
+      '<div class="save-state">WARM-UP</div>' +
+    "</div>"
+  );
 }
 
 function setRowEl(active, exercise, setNumber, onProgress) {
@@ -224,6 +235,15 @@ function workoutLogger() {
       "</div>" +
       '<div class="set-headings"><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div></article>'
     );
+    /* Warm-up sets render first (display-only, never logged): 2 × 5 @ 60%,
+       rounded down to the nearest 2.5 lb. No warm-up load for bodyweight. */
+    var wSets = (e.warmup_sets == null ? 2 : e.warmup_sets);
+    var wPct = (e.warmup_pct == null ? 60 : e.warmup_pct);
+    var wReps = (e.warmup_reps == null ? 5 : e.warmup_reps);
+    if (wSets > 0 && e.current_weight != null && e.current_weight > 0) {
+      var wLb = Math.floor((e.current_weight * wPct / 100) / 2.5) * 2.5;
+      for (var w = 1; w <= wSets; w++) card.appendChild(warmupRowEl(w, wLb, wReps));
+    }
     for (var n = 1; n <= e.target_sets; n++) {
       card.appendChild(setRowEl(active, e, n, updateProgress));
     }
@@ -484,7 +504,7 @@ function boot() {
     $("main").appendChild(emptyState("!", "Not connected yet.", "Add your Apps Script web-app URL to API_URL in app.js, then reload."));
     return;
   }
-  $("main").appendChild(emptyState("—", "Loading your routine.", "Your Upper A / Upper B rotation will be ready in a moment."));
+  $("main").appendChild(emptyState("—", "Loading your routine.", "Your workout rotation will be ready in a moment."));
   refresh().then(function () {
     render();
   }).catch(function () {

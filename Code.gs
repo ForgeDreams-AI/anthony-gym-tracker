@@ -10,7 +10,8 @@ var TZ = 'America/Phoenix';
 var HEADERS = {
   Workouts: ['id', 'key', 'name', 'emphasis', 'position', 'custom'],
   Exercises: ['id', 'workout_id', 'name', 'target_sets', 'min_reps', 'max_reps',
-              'current_weight', 'increment', 'position', 'last_adjustment'],
+              'current_weight', 'increment', 'position', 'last_adjustment',
+              'warmup_sets', 'warmup_pct', 'warmup_reps'],
   Sessions: ['id', 'workout_id', 'started_at', 'completed_at'],
   Sets: ['session_id', 'exercise_id', 'set_number', 'weight', 'reps'],
   Meta: ['key', 'value']
@@ -148,7 +149,10 @@ function getWorkouts() {
           target_sets: Number(x.target_sets), min_reps: Number(x.min_reps), max_reps: Number(x.max_reps),
           current_weight: x.current_weight === '' ? null : Number(x.current_weight),
           increment: Number(x.increment), position: Number(x.position),
-          last_adjustment: String(x.last_adjustment || '')
+          last_adjustment: String(x.last_adjustment || ''),
+          warmup_sets: x.warmup_sets === '' || x.warmup_sets === undefined ? 2 : Number(x.warmup_sets),
+          warmup_pct: x.warmup_pct === '' || x.warmup_pct === undefined ? 60 : Number(x.warmup_pct),
+          warmup_reps: x.warmup_reps === '' || x.warmup_reps === undefined ? 5 : Number(x.warmup_reps)
         };
       });
     return {
@@ -299,7 +303,10 @@ function createWorkout(name, emphasis, exercisesJson) {
       max_reps: Math.max(Number(ex.min_reps) || 8, Number(ex.max_reps) || 12),
       current_weight: numOrNull(ex.current_weight),
       increment: Number(ex.increment) || 5,
-      position: i + 1, last_adjustment: ''
+      position: i + 1, last_adjustment: '',
+      warmup_sets: ex.warmup_sets === undefined ? 2 : Math.max(0, Number(ex.warmup_sets) || 0),
+      warmup_pct: ex.warmup_pct === undefined ? 60 : Number(ex.warmup_pct) || 60,
+      warmup_reps: ex.warmup_reps === undefined ? 5 : Math.max(1, Number(ex.warmup_reps) || 5)
     });
   });
   return wid;

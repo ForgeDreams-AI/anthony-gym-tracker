@@ -7,6 +7,12 @@ Mobile-first gym log — a faithful web port of Anthony's Gym Tracker artifact, 
 - **Program** — Load Control: per-exercise working weight + increment settings.
 - **Create** — build custom workouts (name, emphasis, exercises with sets/reps/weight/increment, reorder/remove); they join the rotation.
 
+## Set structure
+
+Every exercise runs **2 warm-up sets × 5 reps @ 60%** of the working weight (rounded down to the nearest 2.5 lb; no warm-up load shown for bodyweight moves), then **2 working sets to technical failure** capped at the top of the rep range. Warm-ups are display-only — they never move the weight. Auto-bump judges only the working sets: both hit max reps → weight goes up by the increment.
+
+`seed-routine.json` holds the starter program: Upper A (chest/tris) → Lower Power → Upper B (back thickness/rear delts) → Lower Explosive → Upper C (shoulders/core).
+
 ## Backend
 
 `Code.gs` is the Apps Script web app. Deploy steps:
