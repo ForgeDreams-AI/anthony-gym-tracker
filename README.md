@@ -13,6 +13,18 @@ Every exercise runs **2 warm-up sets × 5 reps @ 60%** of the working weight (ro
 
 `seed-routine.json` holds the starter program: Upper A (chest/tris) → Lower Power → Upper B (back thickness/rear delts) → Lower Explosive → Upper C (shoulders/core).
 
+## How it runs
+
+On-device by default — everything (program, workout log, measurements) lives in the phone's localStorage. No accounts, no setup: one link works for everyone, and each person's data stays on their own phone.
+
+To use a Google Sheet backend instead, deploy `Code.gs` as a web app and set `API_URL` in `app.js` to the `/exec` URL. (Measurements always stay on-device.)
+
+## Body tab
+
+- **Onboarding intake** — first launch asks for starting stats (weight + 7 tape sites: neck, shoulders, chest, waist, hips, arm, thigh) and a goal (build / lean / stronger) with an optional deadline.
+- **Weekly check-in** — a nudge appears on Train when 7+ days pass since the last check-in; the form pre-fills last values for a 60-second update.
+- **Coach notes** — automatic analysis: training consistency (sessions in the last 7 days), plateau detection (main lifts with no weight bump in 4+ sessions), and measurement trends vs the goal (e.g. waist outpacing muscle on a bulk).
+
 ## Backend
 
 `Code.gs` is the Apps Script web app. Deploy steps:
