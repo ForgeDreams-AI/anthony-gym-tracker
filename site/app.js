@@ -879,6 +879,7 @@ function coachInsights() {
     });
   }
   stalled.slice(0, 3).forEach(function (x) {
+    if ((x.sessions_since_bump || 0) >= 6) return; /* 6+ gets the deload tweak card instead */
     out.push({ tone: "warn", title: x.name + " has stalled",
       body: "No weight bump in " + x.sessions_since_bump + " sessions. Check sleep and food first — then try adding one rep per set before forcing the weight up." });
   });
@@ -920,6 +921,138 @@ function coachInsights() {
       body: "One check-in is a snapshot — two is a trend. Your next weekly check-in turns on the full analysis." });
   }
   return out.slice(0, 4);
+}
+
+/* ---------------- suggested program tweaks ---------------- */
+var LS_TWEAKS_DISMISSED = "ght_tweaks_dismissed_v1";
+function dismissedTweaks() { return lsGet(LS_TWEAKS_DISMISSED, []); }
+function dismissTweak(id) {
+  var d = dismissedTweaks();
+  if (d.indexOf(id) < 0) { d.push(id); lsSet(LS_TWEAKS_DISMISSED, d); }
+}
+function exerciseExists(part) {
+  var found = false;
+  Local.db.workouts.forEach(function (w) {
+    w.exercises.forEach(function (x) {
+      if (x.name.toLowerCase().indexOf(part.toLowerCase()) >= 0) found = true;
+    });
+  });
+  return found;
+}
+function findWorkoutFor(matchWords) {
+  var workouts = Local.sortedWorkouts(), i, j, k;
+  for (i = 0; i < workouts.length; i++) {
+    for (j = 0; j < workouts[i].exercises.length; j++) {
+      var nm = workouts[i].exercises[j].name.toLowerCase();
+      for (k = 0; k < matchWords.length; k++) {
+        if (nm.indexOf(matchWords[k]) >= 0) return workouts[i];
+      }
+    }
+  }
+  return workouts[0] || null;
+}
+function addExerciseTo(w, spec) {
+  if (!w) return;
+  var db = Local.db;
+  var eid = Local.nextId(db.workouts.reduce(function (acc, x) { return acc.concat(x.exercises); }, []));
+  w.exercises.push({
+    id: eid, workout_id: w.id, name: spec.name,
+    target_sets: spec.target_sets, min_reps: spec.min_reps, max_reps: spec.max_reps,
+    current_weight: null, increment: spec.increment,
+    position: w.exercises.length + 1, last_adjustment: "",
+    warmup_sets: 2, warmup_pct: 60, warmup_reps: 5, sessions_since_bump: 0
+  });
+  Local.save();
+}
+function tweakSuggestions() {
+  var out = [];
+  if (API_URL || !Local.db) return out;
+  var dismissed = dismissedTweaks();
+  function add(t) {
+    if (dismissed.indexOf(t.id) < 0) out.push(t);
+  }
+  var profile = getProfile();
+  var goal = profile && profile.goal;
+  var meas = getMeas();
+
+  /* lagging muscle groups (build goal, 3+ check-ins) */
+  if (goal === "build" && meas.length >= 3) {
+    var a = meas[meas.length - 3], b = meas[meas.length - 1];
+    function delta(k) {
+      if (a[k] == null || b[k] == null) return null;
+      return b[k] - a[k];
+    }
+    var dChest = delta("chest"), dArm = delta("arm");
+    if (dChest != null && dArm != null && dChest >= 0.25 && dArm <= 0 && !exerciseExists("hammer")) {
+      add({
+        id: "lag-arm-" + b.id,
+        title: "Arms lagging behind chest",
+        body: "Chest +" + dChest.toFixed(2) + " in lately, arms flat. Add a hammer curl for brachialis size.",
+        cta: "Add Hammer Curl",
+        apply: function () { addExerciseTo(findWorkoutFor(["curl"]), { name: "Hammer Curl", target_sets: 2, min_reps: 10, max_reps: 15, increment: 2.5 }); }
+      });
+    }
+    if (dChest != null && dArm != null && dArm >= 0.25 && dChest <= 0 && !exerciseExists("fly")) {
+      add({
+        id: "lag-chest-" + b.id,
+        title: "Chest lagging behind arms",
+        body: "Arms +" + dArm.toFixed(2) + " in lately, chest flat. Add an incline fly for upper-chest stretch.",
+        cta: "Add Incline DB Fly",
+        apply: function () { addExerciseTo(findWorkoutFor(["bench", "press", "dip"]), { name: "Incline DB Fly", target_sets: 2, min_reps: 10, max_reps: 15, increment: 2.5 }); }
+      });
+    }
+  }
+
+  /* deload for long-stalled main lifts */
+  Local.sortedWorkouts().forEach(function (w) {
+    w.exercises.slice(0, 3).forEach(function (x) {
+      if (x.current_weight && (x.sessions_since_bump || 0) >= 6) {
+        var exId = x.id, ssb = x.sessions_since_bump, cw = x.current_weight;
+        var nw = Math.floor(cw * 0.9 / 2.5) * 2.5;
+        add({
+          id: "deload-" + exId + "-" + ssb,
+          title: "Deload " + x.name + "?",
+          body: "No bump in " + ssb + " sessions. Drop 10% (" + cw + " → " + nw + " lb) and climb back — most stalls break this way.",
+          cta: "Apply deload",
+          apply: function () {
+            var lx = Local.findExercise(exId);
+            if (!lx || !lx.current_weight) return;
+            var w2 = Math.floor(lx.current_weight * 0.9 / 2.5) * 2.5;
+            lx.current_weight = w2;
+            lx.sessions_since_bump = 0;
+            lx.last_adjustment = "deload → " + w2 + " lb";
+            Local.save();
+          }
+        });
+      }
+    });
+  });
+
+  return out.slice(0, 3);
+}
+function tweaksCard() {
+  var tweaks = tweakSuggestions();
+  if (!tweaks.length) return null;
+  var card = el('<div class="tweaks"></div>');
+  card.appendChild(el("<h3>Suggested tweaks</h3>"));
+  tweaks.forEach(function (t) {
+    var d = el('<div class="tweak"><strong>' + esc(t.title) + "</strong><p>" + esc(t.body) + "</p></div>");
+    var row = el('<div class="mh-actions"></div>');
+    var apply = el('<button class="mh-link mh-save">' + esc(t.cta) + "</button>");
+    apply.addEventListener("click", function () {
+      t.apply();
+      dismissTweak(t.id);
+      render();
+      toast("Program updated.");
+    });
+    var no = el('<button class="mh-link">Dismiss</button>');
+    no.addEventListener("click", function () { dismissTweak(t.id); render(); });
+    row.appendChild(apply);
+    row.appendChild(no);
+    d.appendChild(row);
+    card.appendChild(d);
+  });
+  return card;
 }
 
 /* ---------------- Body tab ---------------- */
@@ -1100,6 +1233,8 @@ function bodyView() {
   var s = el('<section class="page-section"></section>');
   s.appendChild(pageTitle("BODY", "Check-ins, measurements, and what they're telling you."));
   s.appendChild(goalCard());
+  var tc = tweaksCard();
+  if (tc) s.appendChild(tc);
   s.appendChild(insightsCard());
   s.appendChild(checkinForm());
   s.appendChild(measHistory());
