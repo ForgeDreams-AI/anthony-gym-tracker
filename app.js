@@ -120,6 +120,8 @@ var Local = {
           target_sets: x.target_sets, min_reps: x.min_reps, max_reps: x.max_reps,
           current_weight: (x.current_weight == null ? null : x.current_weight),
           increment: x.increment, position: xi + 1, last_adjustment: "",
+          kind: (x.kind === "accessory" ? "accessory" : "main"),
+          template: (x.template === "power" ? "power" : "standard"),
           warmup_sets: (x.warmup_sets == null ? 2 : x.warmup_sets),
           warmup_pct: (x.warmup_pct == null ? 60 : x.warmup_pct),
           warmup_reps: (x.warmup_reps == null ? 5 : x.warmup_reps),
@@ -203,8 +205,20 @@ var LocalApi = {
     if (!sess) return Promise.reject(new Error("Session not found"));
     var w = Local.findWorkout(sess.workout_id);
     if (!w) return Promise.reject(new Error("Workout not found"));
+    /* Baseline day: no completed session for this workout yet. Establish each
+       exercise's working weight from the heaviest set logged — no auto-bump. */
+    var baselineW = true;
+    db.sessions.forEach(function (s) { if (s.workout_id === w.id && s.completed_at) baselineW = false; });
     w.exercises.forEach(function (x) {
       var logged = db.sets.filter(function (r) { return r.session_id === sid && r.exercise_id === x.id && (r.reps || 0) > 0; });
+      if (baselineW) {
+        var top = null;
+        logged.forEach(function (r) { if (r.weight != null && (top == null || r.weight > top)) top = r.weight; });
+        x.current_weight = top;
+        x.last_adjustment = top == null ? "—" : "baseline " + top + " lb";
+        x.sessions_since_bump = 0;
+        return;
+      }
       var hit = x.target_sets > 0 && logged.length >= x.target_sets &&
         logged.every(function (r) { return (r.reps || 0) >= x.max_reps; });
       if (hit) {
@@ -251,6 +265,7 @@ var LocalApi = {
         current_weight: (ex.current_weight === "" || ex.current_weight == null) ? null : Number(ex.current_weight),
         increment: Number(ex.increment) || 5,
         position: i + 1, last_adjustment: "",
+        kind: "main", template: "standard",
         warmup_sets: 2, warmup_pct: 60, warmup_reps: 5,
         sessions_since_bump: 0
       };
@@ -299,7 +314,9 @@ function trainHome() {
   });
   if (!next) next = D.workouts[0];
   if (!next) return emptyState("—", "Loading your routine.", "Your workout rotation will be ready in a moment.");
-  var totalSets = next.exercises.reduce(function (s, e) { return s + e.target_sets; }, 0);
+  var baselineNext = isBaselineWorkout(next);
+  var setsForNext = function (e) { return baselineNext ? baselineSets(e) : e.target_sets; };
+  var totalSets = next.exercises.reduce(function (s, e) { return s + setsForNext(e); }, 0);
 
   var s = el("<section></section>");
   var hero = el(
@@ -308,7 +325,7 @@ function trainHome() {
       "<h1>" + esc(next.name) + "</h1>" +
       '<p class="hero-emphasis">' + esc(next.emphasis) + "</p>" +
       '<div class="hero-stats"><div><strong>' + next.exercises.length + "</strong><span>moves</span></div>" +
-      "<div><strong>" + totalSets + "</strong><span>working sets</span></div></div>" +
+      "<div><strong>" + totalSets + "</strong><span>" + (baselineNext ? "sets" : "working sets") + "</span></div></div>" +
       '<button class="primary-button primary-button--light">Start ' + esc(next.name) + "</button>" +
     "</div>"
   );
@@ -322,7 +339,7 @@ function trainHome() {
 
   var head = el(
     '<div class="section-heading"><div><span>THE WORK</span><h2>Today\u2019s order</h2></div>' +
-    "<p>Last working loads are ready.</p></div>"
+    "<p>" + (baselineNext ? "First time — plain sets to find your weights." : "Last working loads are ready.") + "</p></div>"
   );
   s.appendChild(head);
 
@@ -331,9 +348,9 @@ function trainHome() {
     list.appendChild(el(
       '<div class="preview-row">' +
         '<span class="preview-index">' + String(i + 1).padStart(2, "0") + "</span>" +
-        "<div><strong>" + esc(e.name) + "</strong><span>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + "</span></div>" +
-        '<div class="preview-weight"><strong>' + (e.current_weight === null ? "—" : esc(e.current_weight)) + "</strong><span>" +
-        (e.current_weight === null ? "set lb" : "lb") + "</span></div>" +
+        "<div><strong>" + esc(e.name) + "</strong><span>" + setsForNext(e) + " × " + e.min_reps + "\u2013" + e.max_reps + "</span></div>" +
+        '<div class="preview-weight"><strong>' + (baselineNext || e.current_weight === null ? "—" : esc(e.current_weight)) + "</strong><span>" +
+        (baselineNext ? "you'll set" : (e.current_weight === null ? "set lb" : "lb")) + "</span></div>" +
       "</div>"
     ));
   });
@@ -380,10 +397,10 @@ function warmupRowEl(n, weight, reps) {
   );
 }
 
-function setRowEl(active, exercise, setNumber, onProgress) {
+function setRowEl(active, exercise, setNumber, onProgress, blankWeight) {
   var saved = findSavedSet(active, exercise.id, setNumber);
   var weight = saved && saved.weight != null ? String(saved.weight)
-    : (exercise.current_weight != null ? String(exercise.current_weight) : "");
+    : (blankWeight || exercise.current_weight == null ? "" : String(exercise.current_weight));
   var reps = saved && saved.reps != null ? String(saved.reps) : "";
   var saving = false, lastSent = weight + "|" + reps;
 
@@ -434,16 +451,35 @@ function setRowEl(active, exercise, setNumber, onProgress) {
   return row;
 }
 
+/* ---------------- baseline day ----------------
+   First time a workout day is done on this device (no completed session for
+   it yet), keep it old-school: no warm-up rows, no working-set structure —
+   just plain sets so the user can find their weights. Main lifts get 3 sets,
+   accessory lifts get 2. Finishing a baseline day establishes each exercise's
+   working weight from the heaviest set logged. */
+function exerciseKind(e) { return e.kind === "accessory" ? "accessory" : "main"; }
+function baselineSets(e) { return exerciseKind(e) === "accessory" ? 2 : 3; }
+function isBaselineWorkout(workout) {
+  if (!workout || !Local.db) return false;
+  var done = false;
+  Local.db.sessions.forEach(function (s) {
+    if (s.workout_id === workout.id && s.completed_at) done = true;
+  });
+  return !done;
+}
+
 function workoutLogger() {
   var active = D.active_session;
   var workout = null;
   D.workouts.forEach(function (w) { if (w.id === active.workout_id) workout = w; });
   if (!workout) return trainHome();
 
-  var total = workout.exercises.reduce(function (s, e) { return s + e.target_sets; }, 0);
+  var baseline = isBaselineWorkout(workout);
+  var setsFor = function (e) { return baseline ? baselineSets(e) : e.target_sets; };
+  var total = workout.exercises.reduce(function (s, e) { return s + setsFor(e); }, 0);
   var s = el("<section class='workout-live'></section>");
   var hero = el(
-    '<div class="live-hero"><div><span class="live-dot"></span><span>IN PROGRESS</span>' +
+    '<div class="live-hero"><div><span class="live-dot"></span><span>' + (baseline ? "BASELINE DAY — FIND YOUR WEIGHTS" : "IN PROGRESS") + "</span>" +
       "<h1>" + esc(workout.name) + "</h1><p>" + esc(workout.emphasis) + "</p></div>" +
       '<div class="set-progress"><strong>0</strong><span>/' + total + " sets</span></div></div>"
   );
@@ -455,26 +491,34 @@ function workoutLogger() {
   }
 
   var stack = el('<div class="exercise-stack"></div>');
+  var seenMain = false; /* first main lift of the day gets full warm-ups; later mains get one feeler */
   workout.exercises.forEach(function (e, i) {
     var card = el(
       '<article class="exercise-log"><div class="exercise-head">' +
         '<div class="exercise-index">' + String(i + 1).padStart(2, "0") + "</div>" +
-        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + "</p></div>" +
+        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps + (e.template === "power" ? " · power (fresh reps, full rest — not to failure)" : "") + "</p></div>" +
         '<div class="working-weight"><strong>' + esc(formatWeight(e.current_weight)) + "</strong><span>" + esc(e.last_adjustment || "") + "</span></div>" +
       "</div>" +
       '<div class="set-headings"><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div></article>'
     );
     /* Warm-up sets render first (display-only, never logged): 2 × 5 @ 60%,
-       rounded down to the nearest 2.5 lb. No warm-up load for bodyweight. */
+       rounded down to the nearest 2.5 lb. No warm-up load for bodyweight.
+       Skipped entirely on baseline day and for power-template lifts (cleans,
+       jumps warm up their own way). Accessory lifts skip them too — one feeler
+       is plenty once you're warm. Only the day's first main lift gets the full
+       ramp; later main lifts get a single feeler set. */
+    var isPower = e.template === "power";
     var wSets = (e.warmup_sets == null ? 2 : e.warmup_sets);
     var wPct = (e.warmup_pct == null ? 60 : e.warmup_pct);
     var wReps = (e.warmup_reps == null ? 5 : e.warmup_reps);
-    if (wSets > 0 && e.current_weight != null && e.current_weight > 0) {
+    if (!baseline && !isPower && exerciseKind(e) === "main" && wSets > 0 && e.current_weight != null && e.current_weight > 0) {
+      var nW = seenMain ? 1 : wSets;
       var wLb = Math.floor((e.current_weight * wPct / 100) / 2.5) * 2.5;
-      for (var w = 1; w <= wSets; w++) card.appendChild(warmupRowEl(w, wLb, wReps));
+      for (var w = 1; w <= nW; w++) card.appendChild(warmupRowEl(w, wLb, wReps));
     }
-    for (var n = 1; n <= e.target_sets; n++) {
-      card.appendChild(setRowEl(active, e, n, updateProgress));
+    if (exerciseKind(e) === "main") seenMain = true;
+    for (var n = 1; n <= setsFor(e); n++) {
+      card.appendChild(setRowEl(active, e, n, updateProgress, baseline));
     }
     stack.appendChild(card);
   });
@@ -482,7 +526,9 @@ function workoutLogger() {
   updateProgress();
 
   var dock = el(
-    '<div class="finish-dock"><p>Hit the top of every rep range and next session\u2019s load goes up automatically.</p>' +
+    '<div class="finish-dock"><p>' + (baseline
+      ? "First time through — log what you lift and your working weights get set for next time."
+      : "Hit the top of every rep range and next session\u2019s load goes up automatically.") + "</p>" +
     '<button class="primary-button">Finish workout</button></div>'
   );
   dock.querySelector("button").addEventListener("click", function () {
@@ -966,6 +1012,8 @@ function addExerciseTo(w, spec) {
     target_sets: spec.target_sets, min_reps: spec.min_reps, max_reps: spec.max_reps,
     current_weight: null, increment: spec.increment,
     position: w.exercises.length + 1, last_adjustment: "",
+    kind: (spec.kind === "accessory" ? "accessory" : "main"),
+    template: (spec.template === "power" ? "power" : "standard"),
     warmup_sets: 2, warmup_pct: 60, warmup_reps: 5, sessions_since_bump: 0
   });
   Local.save();
