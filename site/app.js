@@ -72,7 +72,11 @@ function refresh() {
 /* ---------------- local backend (on-device, localStorage) ---------------- */
 var LS_DB = "ght_db_v1";
 function lsGet(k, fb) {
-  try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; }
+  try {
+    var v = localStorage.getItem(k);
+    if (v == null) return fb;
+    try { return JSON.parse(v); } catch (e) { return v; }
+  }
   catch (e) { return fb; }
 }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -313,6 +317,8 @@ function trainHome() {
 
   var nudge = checkinNudge();
   if (nudge) s.appendChild(nudge);
+  var rnudge = reportNudge();
+  if (rnudge) s.appendChild(rnudge);
 
   var head = el(
     '<div class="section-heading"><div><span>THE WORK</span><h2>Today\u2019s order</h2></div>' +
@@ -1055,6 +1061,155 @@ function tweaksCard() {
   return card;
 }
 
+/* ---------------- accountability ---------------- */
+var LS_PARTNERS = "ght_partners_v1";
+var LS_LAST_REPORT = "ght_report_sent_v1";
+var LS_USER_NAME = "ght_user_name_v1";
+function getPartners() { return lsGet(LS_PARTNERS, []); }
+
+function reportData() {
+  var good = [], bad = [];
+  var weekAgo = Date.now() - 7 * 864e5;
+  var recent = (D.history || []).filter(function (h) { return new Date(h.completed_at).getTime() >= weekAgo; });
+  if (recent.length === 0) bad.push("No workouts logged in the last 7 days");
+  else if (recent.length < 3) {
+    good.push(recent.length + (recent.length === 1 ? " workout" : " workouts") + " logged this week");
+    bad.push("Under 3 sessions — consistency is the goal");
+  } else {
+    good.push(recent.length + " training sessions this week");
+  }
+  var bumped = [], stalled = [];
+  (D.workouts || []).forEach(function (w) {
+    w.exercises.forEach(function (x) {
+      if (x.last_adjustment && x.last_adjustment.charAt(0) === "+") bumped.push(x.name + " up to " + x.current_weight + " lb");
+      if (!API_URL && x.current_weight && (x.sessions_since_bump || 0) >= 4) stalled.push({ name: x.name, n: x.sessions_since_bump });
+    });
+  });
+  bumped.slice(0, 3).forEach(function (b) { good.push(b); });
+  stalled.slice(0, 3).forEach(function (s) { bad.push(s.name + " stalled " + s.n + " sessions"); });
+  var meas = getMeas(), m = latestMeas();
+  if (m) {
+    var days = Math.round((Date.now() - new Date(m.date + "T12:00:00").getTime()) / 864e5);
+    if (days > 10) bad.push("No measurement check-in for " + days + " days");
+    else good.push("Measurement check-in up to date");
+    if (meas.length >= 2) {
+      var a = meas[meas.length - 2], b2 = meas[meas.length - 1], bits = [];
+      ["weight", "chest", "waist", "arm", "thigh"].forEach(function (k) {
+        if (a[k] != null && b2[k] != null && b2[k] !== a[k]) {
+          var f = null;
+          TAPE_FIELDS.forEach(function (x) { if (x.k === k) f = x; });
+          bits.push(f.label + " " + (b2[k] > a[k] ? "+" : "") + (Math.round((b2[k] - a[k]) * 4) / 4) + " " + f.unit);
+        }
+      });
+      if (bits.length) good.push("Measurements: " + bits.join(", "));
+    }
+  } else {
+    bad.push("No measurements logged yet");
+  }
+  return { good: good, bad: bad };
+}
+
+function buildReportText() {
+  var partners = getPartners();
+  var profile = getProfile();
+  var userName = lsGet(LS_USER_NAME, "").trim() || "your friend";
+  var goal = profile && profile.goal ? GOAL_LABELS[profile.goal] : "not set";
+  var r = reportData();
+  var lines = [];
+  lines.push("Hi " + (partners.length ? partners[0].name : "there") + ",");
+  lines.push("");
+  lines.push("Here's " + userName + "'s training week:");
+  lines.push("");
+  lines.push("GOAL: " + goal);
+  lines.push("");
+  lines.push("THE GOOD");
+  if (r.good.length) r.good.forEach(function (g) { lines.push("\u2022 " + g); });
+  else lines.push("\u2022 Nothing logged yet — week one starts now.");
+  lines.push("");
+  lines.push("NEEDS WORK");
+  if (r.bad.length) r.bad.forEach(function (b) { lines.push("\u2022 " + b); });
+  else lines.push("\u2022 Nothing — clean week.");
+  lines.push("");
+  lines.push("\u2014 sent from Gym Tracker");
+  return { subject: userName + "'s weekly training report", body: lines.join("\n") };
+}
+
+function sendReport() {
+  var partners = getPartners();
+  if (!partners.length) { toast("Add someone first."); return; }
+  var r = buildReportText();
+  var to = partners.map(function (p) { return encodeURIComponent(p.email); }).join(",");
+  lsSet(LS_LAST_REPORT, new Date().toISOString());
+  window.location.href = "mailto:" + to + "?subject=" + encodeURIComponent(r.subject) + "&body=" + encodeURIComponent(r.body);
+}
+
+function accountabilityCard() {
+  var card = el('<div class="account"></div>');
+  card.appendChild(el("<h3>Accountability</h3>"));
+  card.appendChild(el('<p class="dim">Add someone who gets your weekly report — the good and the bad.</p>'));
+  var nameRow = el('<div class="account-row"></div>');
+  nameRow.appendChild(el("<span>Your name</span>"));
+  var nameInp = document.createElement("input");
+  nameInp.type = "text"; nameInp.placeholder = "For the report";
+  nameInp.setAttribute("aria-label", "Your name");
+  nameInp.value = lsGet(LS_USER_NAME, "");
+  nameInp.addEventListener("change", function () { lsSet(LS_USER_NAME, nameInp.value.trim()); });
+  nameRow.appendChild(nameInp);
+  card.appendChild(nameRow);
+  var partners = getPartners();
+  partners.forEach(function (p) {
+    var row = el('<div class="partner-row"><div><strong>' + esc(p.name) + "</strong><span>" + esc(p.email) + "</span></div></div>");
+    var rm = el('<button class="mh-link mh-danger">Remove</button>');
+    rm.addEventListener("click", function () {
+      lsSet(LS_PARTNERS, getPartners().filter(function (x) { return x.id !== p.id; }));
+      render();
+      toast("Partner removed.");
+    });
+    row.appendChild(rm);
+    card.appendChild(row);
+  });
+  var form = el('<div class="partner-form"></div>');
+  var nInp = document.createElement("input");
+  nInp.type = "text"; nInp.placeholder = "Their name"; nInp.setAttribute("aria-label", "Partner name");
+  var eInp = document.createElement("input");
+  eInp.type = "email"; eInp.placeholder = "Their email"; eInp.setAttribute("aria-label", "Partner email");
+  var addB = el('<button class="primary-button">Hold me accountable</button>');
+  addB.addEventListener("click", function () {
+    var nm = nInp.value.trim(), em = eInp.value.trim();
+    if (!nm || em.indexOf("@") < 0) { toast("Add a name and a valid email."); return; }
+    var all = getPartners(), id = 1;
+    all.forEach(function (x) { if (x.id >= id) id = x.id + 1; });
+    all.push({ id: id, name: nm, email: em });
+    lsSet(LS_PARTNERS, all);
+    render();
+    toast("Accountability partner added.");
+  });
+  form.appendChild(nInp); form.appendChild(eInp); form.appendChild(addB);
+  card.appendChild(form);
+  if (partners.length) {
+    var last = lsGet(LS_LAST_REPORT, null);
+    var sendB = el('<button class="primary-button account-send">Send weekly report</button>');
+    sendB.addEventListener("click", sendReport);
+    card.appendChild(sendB);
+    if (last) card.appendChild(el('<p class="dim last-sent">Last sent ' + esc(fmtDate(last.slice(0, 10))) + "</p>"));
+  }
+  return card;
+}
+
+function reportNudge() {
+  var partners = getPartners();
+  if (!partners.length) return null;
+  var last = lsGet(LS_LAST_REPORT, null);
+  var due = !last || (Date.now() - new Date(last).getTime()) > 7 * 864e5;
+  if (!due) return null;
+  var n = el('<div class="checkin-nudge"><div><strong>Accountability report due</strong><span>Send ' +
+    esc(partners[0].name) + " your week — good and bad.</span></div></div>");
+  var b = el('<button class="primary-button nudge-btn">Send it</button>');
+  b.addEventListener("click", function () { setTab("body"); });
+  n.appendChild(b);
+  return n;
+}
+
 /* ---------------- Body tab ---------------- */
 function pageTitle(kicker, title) {
   return el('<div class="page-title"><span>' + esc(kicker) + "</span><h1>" + esc(title) + "</h1></div>");
@@ -1237,6 +1392,7 @@ function bodyView() {
   if (tc) s.appendChild(tc);
   s.appendChild(insightsCard());
   s.appendChild(checkinForm());
+  s.appendChild(accountabilityCard());
   s.appendChild(measHistory());
   return s;
 }
