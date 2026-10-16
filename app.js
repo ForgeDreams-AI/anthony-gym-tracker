@@ -122,6 +122,7 @@ var Local = {
           increment: x.increment, position: xi + 1, last_adjustment: "",
           kind: (x.kind === "accessory" ? "accessory" : "main"),
           template: (x.template === "power" ? "power" : "standard"),
+          headline: (x.headline === true),
           warmup_sets: (x.warmup_sets == null ? 2 : x.warmup_sets),
           warmup_pct: (x.warmup_pct == null ? 60 : x.warmup_pct),
           warmup_reps: (x.warmup_reps == null ? 5 : x.warmup_reps),
@@ -219,7 +220,10 @@ var LocalApi = {
         x.sessions_since_bump = 0;
         return;
       }
-      var hit = x.target_sets > 0 && logged.length >= x.target_sets &&
+      /* Progression judges every rendered working set — the headline lift's
+         third set counts too. */
+      var expected = workingSets(x, w, false);
+      var hit = expected > 0 && logged.length >= expected &&
         logged.every(function (r) { return (r.reps || 0) >= x.max_reps; });
       if (hit) {
         x.current_weight = (x.current_weight || 0) + (x.increment || 0);
@@ -315,7 +319,7 @@ function trainHome() {
   if (!next) next = D.workouts[0];
   if (!next) return emptyState("—", "Loading your routine.", "Your workout rotation will be ready in a moment.");
   var baselineNext = isBaselineWorkout(next);
-  var setsForNext = function (e) { return baselineNext ? baselineSets(e) : e.target_sets; };
+  var setsForNext = function (e) { return workingSets(e, next, baselineNext); };
   var totalSets = next.exercises.reduce(function (s, e) { return s + setsForNext(e); }, 0);
 
   var s = el("<section></section>");
@@ -459,6 +463,38 @@ function setRowEl(active, exercise, setNumber, onProgress, blankWeight) {
    working weight from the heaviest set logged. */
 function exerciseKind(e) { return e.kind === "accessory" ? "accessory" : "main"; }
 function baselineSets(e) { return exerciseKind(e) === "accessory" ? 2 : 3; }
+
+/* ---------------- headline lift ----------------
+   Research verdict: two hard working sets are legitimate for strength but
+   lean for hypertrophy — the day's headline compound gets a third working
+   set. Flagged explicitly in seed data; for custom workouts or older saved
+   data with no flags, the first standard main lift headlines — unless the
+   day is power-emphasis, where the power work already runs higher set
+   counts and plays by its own rules. */
+function isHeadline(e, workout) {
+  if (!workout || e.template === "power" || exerciseKind(e) !== "main") return false;
+  var flagged = false, isIt = false;
+  workout.exercises.forEach(function (x) {
+    if (x.headline === true) { flagged = true; if (x.id === e.id) isIt = true; }
+  });
+  if (flagged) return isIt;
+  var hasPower = workout.exercises.some(function (x) { return x.template === "power"; });
+  if (hasPower) return false;
+  for (var i = 0; i < workout.exercises.length; i++) {
+    var x = workout.exercises[i];
+    if (exerciseKind(x) === "main" && x.template !== "power") return x.id === e.id;
+  }
+  return false;
+}
+/* Working-set count for one exercise on a training day. Baseline day keeps
+   the plain 3/2 logging; power-template lifts keep their own set counts;
+   the headline lift gets +1 working set per the research. */
+function workingSets(e, workout, baseline) {
+  if (baseline) return baselineSets(e);
+  if (e.template === "power") return e.target_sets;
+  if (isHeadline(e, workout)) return e.target_sets + 1;
+  return e.target_sets;
+}
 function isBaselineWorkout(workout) {
   if (!workout || !Local.db) return false;
   var done = false;
@@ -475,7 +511,7 @@ function workoutLogger() {
   if (!workout) return trainHome();
 
   var baseline = isBaselineWorkout(workout);
-  var setsFor = function (e) { return baseline ? baselineSets(e) : e.target_sets; };
+  var setsFor = function (e) { return workingSets(e, workout, baseline); };
   var total = workout.exercises.reduce(function (s, e) { return s + setsFor(e); }, 0);
   var s = el("<section class='workout-live'></section>");
   var hero = el(
@@ -496,7 +532,7 @@ function workoutLogger() {
     var card = el(
       '<article class="exercise-log"><div class="exercise-head">' +
         '<div class="exercise-index">' + String(i + 1).padStart(2, "0") + "</div>" +
-        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps + (e.template === "power" ? " · power (fresh reps, full rest — not to failure)" : "") + "</p></div>" +
+        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps + (e.template === "power" ? " · power (fresh reps, full rest — not to failure)" : ((!baseline && isHeadline(e, workout)) ? " · headline lift" : "")) + "</p></div>" +
         '<div class="working-weight"><strong>' + esc(formatWeight(e.current_weight)) + "</strong><span>" + esc(e.last_adjustment || "") + "</span></div>" +
       "</div>" +
       '<div class="set-headings"><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div></article>'
@@ -579,10 +615,10 @@ function historyView() {
 }
 
 /* ---------------- Program ---------------- */
-function exerciseSetting(e) {
+function exerciseSetting(e, workout) {
   var row = el(
     '<div class="setting-row">' +
-      '<div class="setting-name"><strong>' + esc(e.name) + "</strong><span>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + "</span></div>" +
+      '<div class="setting-name"><strong>' + esc(e.name) + "</strong><span>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + (isHeadline(e, workout) ? " · headline +1 set" : "") + "</span></div>" +
       '<label><span>Working lb</span><input aria-label="' + esc(e.name) + ' working weight" type="number" inputmode="decimal" min="0" step="2.5" placeholder="\u2014"></label>' +
       '<label><span>Add lb</span><input aria-label="' + esc(e.name) + ' progression increment" type="number" inputmode="decimal" min="0" step="2.5"></label>' +
       '<button aria-label="Save ' + esc(e.name) + ' settings">Save</button>' +
@@ -636,7 +672,7 @@ function programView() {
     block.appendChild(head);
     if (openProgram === w.id) {
       var list = el('<div class="setting-list"></div>');
-      w.exercises.forEach(function (e) { list.appendChild(exerciseSetting(e)); });
+      w.exercises.forEach(function (e) { list.appendChild(exerciseSetting(e, w)); });
       block.appendChild(list);
       if (w.custom) {
         var del = el('<button class="program-delete">Delete this workout</button>');
