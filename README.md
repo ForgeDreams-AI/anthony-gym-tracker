@@ -23,7 +23,7 @@ To use a Google Sheet backend instead, deploy `Code.gs` as a web app and set `AP
 
 - **Onboarding intake** — first launch asks for starting stats (weight + 7 tape sites: neck, shoulders, chest, waist, hips, arm, thigh) and a goal (build / lean / stronger) with an optional deadline.
 - **Weekly check-in** — a nudge appears on Train when 7+ days pass since the last check-in; the form pre-fills last values for a 60-second update.
-- **Coach notes** — automatic analysis: training consistency (sessions in the last 7 days), plateau detection (main lifts with no weight bump in 4+ sessions), and measurement trends vs the goal (e.g. waist outpacing muscle on a bulk).
+- **Accountability** — add a partner (name + email) with the "Hold me accountable" button; "Send weekly report" emails them the good and the bad (sessions, bumped lifts, measurement deltas, stalled lifts). Train tab nudges when a report is 7+ days overdue.
 
 ## Backend
 
