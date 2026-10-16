@@ -817,6 +817,9 @@ function onboardingView() {
     if (OB.deadline) dinp.value = OB.deadline;
     dl.appendChild(dinp);
     s.appendChild(dl);
+    var row2 = el('<div class="ob-row"></div>');
+    var back = el('<button class="ghost-button">Back</button>');
+    back.addEventListener("click", function () { OB.deadline = dinp.value || ""; OB.step = 1; renderOnboard(); });
     var start = el('<button class="primary-button">Start training</button>');
     start.addEventListener("click", function () {
       if (!OB.goal) { toast("Pick a goal to continue."); return; }
@@ -833,7 +836,9 @@ function onboardingView() {
       setTab("train");
       toast("You're in. Let's work.");
     });
-    s.appendChild(start);
+    row2.appendChild(back);
+    row2.appendChild(start);
+    s.appendChild(row2);
   }
   return s;
 }
@@ -1013,17 +1018,82 @@ function measHistory() {
     return s;
   }
   for (var i = all.length - 1; i >= 0; i--) {
-    var m = all[i], prev = all[i - 1];
-    var bits = [];
-    TAPE_FIELDS.forEach(function (f) {
-      if (m[f.k] == null) return;
-      var d = prev && prev[f.k] != null ? fmtDelta(m[f.k] - prev[f.k], f.unit) : "";
-      bits.push('<span class="mh-bit"><strong>' + m[f.k] + "</strong> " + f.unit + " " + esc(f.label) + esc(d) + "</span>");
-    });
-    var row = el('<div class="mh-row"><div class="mh-date">' + esc(fmtDate(m.date)) + "</div><div>" + bits.join("") + "</div></div>");
-    s.appendChild(row);
+    s.appendChild(measRow(all[i], all[i - 1]));
   }
   return s;
+}
+
+function measRow(m, prev) {
+  var row = el('<div class="mh-row"></div>');
+  row.appendChild(el('<div class="mh-date">' + esc(fmtDate(m.date)) + "</div>"));
+  var bits = [];
+  TAPE_FIELDS.forEach(function (f) {
+    if (m[f.k] == null) return;
+    var d = prev && prev[f.k] != null ? fmtDelta(m[f.k] - prev[f.k], f.unit) : "";
+    bits.push('<span class="mh-bit"><strong>' + m[f.k] + "</strong> " + f.unit + " " + esc(f.label) + esc(d) + "</span>");
+  });
+  row.appendChild(el("<div>" + bits.join("") + "</div>"));
+  var actions = el('<div class="mh-actions"></div>');
+  var editB = el('<button class="mh-link">Edit</button>');
+  editB.addEventListener("click", function () { editMeasRow(m, row); });
+  var delB = el('<button class="mh-link mh-danger">Delete</button>');
+  delB.addEventListener("click", function () {
+    if (delB.dataset.armed) {
+      lsSet(LS_MEAS, getMeas().filter(function (x) { return x.id !== m.id; }));
+      render();
+      toast("Check-in deleted.");
+    } else {
+      delB.dataset.armed = "1";
+      delB.textContent = "Tap again to delete";
+      setTimeout(function () {
+        if (delB.isConnected) { delete delB.dataset.armed; delB.textContent = "Delete"; }
+      }, 3000);
+    }
+  });
+  actions.appendChild(editB);
+  actions.appendChild(delB);
+  row.appendChild(actions);
+  return row;
+}
+
+function editMeasRow(m, row) {
+  row.innerHTML = "";
+  row.appendChild(el('<div class="mh-date">' + esc(fmtDate(m.date)) + " — editing</div>"));
+  var form = el('<div class="mh-edit"></div>');
+  var inputs = {};
+  TAPE_FIELDS.forEach(function (f) {
+    if (m[f.k] == null) return;
+    var lab = el('<label class="mh-edit-field"><span>' + esc(f.label) + " (" + f.unit + ")</span></label>");
+    var inp = document.createElement("input");
+    inp.type = "number"; inp.step = "0.25"; inp.min = "0"; inp.value = m[f.k];
+    inputs[f.k] = inp;
+    lab.appendChild(inp);
+    form.appendChild(lab);
+  });
+  row.appendChild(form);
+  var btns = el('<div class="mh-actions"></div>');
+  var save = el('<button class="mh-link mh-save">Save</button>');
+  save.addEventListener("click", function () {
+    var vals = {};
+    Object.keys(inputs).forEach(function (k) {
+      var v = inputs[k].value.trim();
+      if (v !== "" && !isNaN(Number(v))) vals[k] = Number(v);
+    });
+    var updated = getMeas().map(function (x) {
+      if (x.id !== m.id) return x;
+      var nx = { id: x.id, date: x.date };
+      Object.keys(vals).forEach(function (k) { nx[k] = vals[k]; });
+      return nx;
+    });
+    lsSet(LS_MEAS, updated);
+    render();
+    toast("Check-in updated.");
+  });
+  var cancel = el('<button class="mh-link">Cancel</button>');
+  cancel.addEventListener("click", render);
+  btns.appendChild(save);
+  btns.appendChild(cancel);
+  row.appendChild(btns);
 }
 
 function bodyView() {
