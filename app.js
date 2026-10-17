@@ -5,7 +5,7 @@ var API_URL = "";
 
 /* ---------------- state ---------------- */
 var D = null;            // dashboard payload
-var tab = "train";
+var tab = "home";
 var openProgram = 0;     // program accordion open workout id
 var draftName = "", draftEmphasis = "";
 var draftExercises = []; // {name, sets, min, max, weight, inc}
@@ -309,6 +309,250 @@ function setTab(t) {
   window.scrollTo(0, 0);
 }
 
+/* ---------------- Home dashboard ----------------
+   Landing tab: welcome, the 10K treadmill challenge, current workout,
+   goal timeline, and weight trend — all from on-device data. */
+var LS_10K = "ght_10k_v1";
+var TREADMILL_TIMER_URL = "https://muse.ai/s/treadmill-timer-xoxb6axmxqavwog";
+function get10k() { return lsGet(LS_10K, []); }
+function save10k(a) { lsSet(LS_10K, a); }
+
+/* ---------------- waist-to-height target ----------------
+   Keep waist under half your height. One number to remember. */
+function waistTarget(heightIn) {
+  if (heightIn == null || heightIn <= 0) return null;
+  return Math.round(heightIn * 0.5 * 10) / 10;
+}
+function waistRatio(waistIn, heightIn) {
+  if (waistIn == null || heightIn == null || heightIn <= 0) return null;
+  return waistIn / heightIn;
+}
+
+function dayGreeting() {
+  var h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function dashStat(value, label) {
+  return '<div class="dash-stat"><strong>' + esc(String(value)) + "</strong><span>" + esc(label) + "</span></div>";
+}
+
+function challengeCard() {
+  var card = el('<div class="dash-card"></div>');
+  card.appendChild(el('<div class="dash-kicker">CHALLENGE</div><h2>10K Steps in an Hour</h2>' +
+    '<p class="dim">Treadmill · 6 × 10-minute blocks. Log every attempt — completions are what count.</p>'));
+  var atts = get10k().slice().sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  var done = atts.filter(function (a) { return a.completed; }).length;
+  var last = atts.length ? atts[atts.length - 1] : null;
+  card.appendChild(el('<div class="dash-stats">' +
+    dashStat(atts.length, "attempts") + dashStat(done, "completed") +
+    dashStat(last ? fmtDate(last.date) : "—", "last try") + "</div>"));
+
+  var btnRow = el('<div class="dash-actions"></div>');
+  var timerLink = el('<a class="ghost-button" href="' + TREADMILL_TIMER_URL + '" target="_blank" rel="noopener">Open treadmill timer</a>');
+  btnRow.appendChild(timerLink);
+  var logBtn = el('<button class="primary-button">Log attempt</button>');
+  btnRow.appendChild(logBtn);
+  card.appendChild(btnRow);
+
+  var form = el('<div class="challenge-form" hidden></div>');
+  var dRow = el('<div class="cf-row"></div>');
+  var dinp = el('<input type="date" aria-label="Attempt date">');
+  dinp.value = todayStr();
+  dRow.appendChild(el("<span>Date</span>")); dRow.appendChild(dinp);
+  form.appendChild(dRow);
+  var rRow = el('<div class="cf-row"></div>');
+  var sel = el('<select aria-label="Result"><option value="yes">Completed the hour</option><option value="no">Attempted — didn\u2019t finish</option></select>');
+  rRow.appendChild(el("<span>Result</span>")); rRow.appendChild(sel);
+  form.appendChild(rRow);
+  var sRow = el('<div class="cf-row"></div>');
+  var sinp = el('<input type="number" inputmode="numeric" min="0" placeholder="e.g. 10250" aria-label="Steps">');
+  sRow.appendChild(el("<span>Steps</span>")); sRow.appendChild(sinp);
+  form.appendChild(sRow);
+  var nRow = el('<div class="cf-row"></div>');
+  var ninp = el('<input type="text" placeholder="How\u2019d it feel? (optional)" aria-label="Note">');
+  nRow.appendChild(el("<span>Note</span>")); nRow.appendChild(ninp);
+  form.appendChild(nRow);
+  var fBtns = el('<div class="dash-actions"></div>');
+  var save = el('<button class="primary-button">Save</button>');
+  var cancel = el('<button class="ghost-button">Cancel</button>');
+  fBtns.appendChild(save); fBtns.appendChild(cancel);
+  form.appendChild(fBtns);
+  card.appendChild(form);
+  logBtn.addEventListener("click", function () { form.hidden = !form.hidden; });
+  cancel.addEventListener("click", function () { form.hidden = true; });
+  save.addEventListener("click", function () {
+    if (!dinp.value) { toast("Pick a date."); return; }
+    var steps = sinp.value.trim() === "" ? null : Math.max(0, parseInt(sinp.value, 10) || 0);
+    var all = get10k();
+    all.push({ id: Date.now(), date: dinp.value, completed: sel.value === "yes", steps: steps, note: ninp.value.trim() });
+    save10k(all);
+    toast("Attempt logged. Nice work.");
+    render();
+  });
+
+  if (atts.length) {
+    var list = el('<div class="challenge-list"></div>');
+    atts.slice(-4).reverse().forEach(function (a) {
+      list.appendChild(el('<div class="challenge-row"><span>' + esc(fmtDate(a.date)) + "</span>" +
+        '<strong class="' + (a.completed ? "done" : "tried") + '">' + (a.completed ? "Completed" : "Attempted") + "</strong>" +
+        "<span>" + (a.steps != null ? esc(String(a.steps)) + " steps" : "") + "</span></div>"));
+    });
+    card.appendChild(list);
+  }
+  return card;
+}
+
+function nextWorkoutCard() {
+  var next = null;
+  D.workouts.forEach(function (w) { if (w.id === D.next_workout_id) next = w; });
+  if (!next) next = D.workouts[0];
+  var card = el('<div class="dash-card"></div>');
+  card.appendChild(el('<div class="dash-kicker">TRAINING</div>'));
+  if (!next) {
+    card.appendChild(el('<p class="dim">No workouts yet.</p>'));
+    return card;
+  }
+  if (D.active_session) {
+    card.appendChild(el("<h2>Workout in progress</h2>" + '<p class="dim">Pick up right where you left off.</p>'));
+    var rb = el('<button class="primary-button">Resume workout</button>');
+    rb.addEventListener("click", function () { setTab("train"); });
+    card.appendChild(rb);
+    return card;
+  }
+  var baselineNext = isBaselineWorkout(next);
+  var n = 0;
+  next.exercises.forEach(function (e) { n += workingSets(e, next, baselineNext); });
+  card.appendChild(el("<h2>" + esc(next.name) + "</h2>" +
+    '<p class="dim">' + esc(next.emphasis || "") + " · " + next.exercises.length + " moves · " + n +
+    (baselineNext ? " sets — first time, find your weights" : " working sets") + "</p>"));
+  var sb = el('<button class="primary-button">Start ' + esc(next.name) + "</button>");
+  sb.addEventListener("click", function () {
+    sb.disabled = true;
+    startWorkout(next.id).then(function () { setTab("train"); });
+  });
+  var vb = el('<button class="ghost-button">Preview</button>');
+  vb.addEventListener("click", function () { setTab("train"); });
+  var row = el('<div class="dash-actions"></div>');
+  row.appendChild(sb); row.appendChild(vb);
+  card.appendChild(row);
+  return card;
+}
+
+function goalTimelineCard() {
+  var card = el('<div class="dash-card"></div>');
+  card.appendChild(el('<div class="dash-kicker">GOAL TIMELINE</div>'));
+  var p = getProfile();
+  if (!p || !p.goal) {
+    card.appendChild(el("<h2>No goal set yet</h2>" + '<p class="dim">Set a goal and deadline on the Body tab — your timeline lives here.</p>'));
+    var sb = el('<button class="ghost-button">Set goal</button>');
+    sb.addEventListener("click", function () { setTab("body"); });
+    card.appendChild(sb);
+    return card;
+  }
+  var label = GOAL_LABELS[p.goal] || p.goal;
+  var sub = "", bar = "";
+  if (p.deadline) {
+    var left = daysUntil(p.deadline);
+    sub = esc(fmtDate(p.deadline)) + " · " + (left >= 0 ? left + " days left" : "deadline passed");
+    if (p.created_at && left >= 0) {
+      var t0 = new Date(p.created_at).getTime();
+      var t1 = new Date(p.deadline + "T12:00:00").getTime();
+      var pct = Math.max(0, Math.min(100, Math.round((Date.now() - t0) / Math.max(1, t1 - t0) * 100)));
+      bar = '<div class="progress-track"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
+        '<p class="dim">' + pct + "% of the timeline used</p>";
+    }
+  } else {
+    sub = "No deadline set.";
+  }
+  card.appendChild(el("<h2>" + esc(label) + "</h2>" + '<p class="dim">' + sub + "</p>" + bar));
+  return card;
+}
+
+function waistCard() {
+  var card = el('<div class="dash-card"></div>');
+  card.appendChild(el('<div class="dash-kicker">WAIST TARGET</div>'));
+  var m = latestMeas() || {};
+  var h = m.height, w = m.waist;
+  if (h == null || w == null) {
+    card.appendChild(el("<h2>—</h2>" + '<p class="dim">Add your height and waist on the Body tab — your target is half your height.</p>'));
+    var sb = el('<button class="ghost-button">Add measurements</button>');
+    sb.addEventListener("click", function () { setTab("body"); });
+    card.appendChild(sb);
+    return card;
+  }
+  var target = waistTarget(h);
+  var ratio = waistRatio(w, h);
+  var pct = Math.round(ratio * 100);
+  var over = ratio >= 0.5;
+  card.appendChild(el('<div class="weight-big"><strong>' + esc(String(w)) + '</strong><span>in · target ' + esc(String(target)) + ' in</span></div>' +
+    '<p class="dim">Waist is ' + pct + "% of height — " + (over ? "over the line" : "under the line") + "</p>" +
+    '<div class="progress-track"><div class="progress-fill" style="width:' + Math.min(100, pct) + "%;" + (over ? "background:#e8c547;" : "") + '"></div></div>'));
+  if (over) {
+    card.appendChild(el('<p class="dim" style="margin-top:10px">Over half your height — 2–3 treadmill 10K sessions a week moves this fastest.</p>'));
+  }
+  return card;
+}
+
+function weightCard() {
+  var card = el('<div class="dash-card"></div>');
+  card.appendChild(el('<div class="dash-kicker">WEIGHT</div>'));
+  var ms = getMeas().filter(function (m) { return m.weight != null; });
+  if (!ms.length) {
+    card.appendChild(el("<h2>—</h2>" + '<p class="dim">Log a check-in on the Body tab — your trend lives here.</p>'));
+  } else {
+    var first = ms[0], lastM = ms[ms.length - 1];
+    var dTxt;
+    if (ms.length < 2) {
+      dTxt = "first weigh-in";
+    } else {
+      var d = Math.round((lastM.weight - first.weight) * 10) / 10;
+      dTxt = (d > 0 ? "+" : "") + d + " lb since " + fmtDate(first.date);
+    }
+    var extra = "";
+    var prof = getProfile();
+    var tw = prof && prof.target_weight !== "" && prof.target_weight != null ? Number(prof.target_weight) : null;
+    if (tw && tw > 0) {
+      var toGo = Math.round((lastM.weight - tw) * 10) / 10;
+      if (toGo > 0) {
+        extra = '<p class="dim">' + esc(String(toGo)) + " lb to target (" + esc(String(tw)) + " lb)</p>";
+        if (first.weight !== tw) {
+          var tpct = Math.max(0, Math.min(100, Math.round((first.weight - lastM.weight) / (first.weight - tw) * 100)));
+          extra += '<div class="progress-track"><div class="progress-fill" style="width:' + tpct + '%"></div></div>';
+        }
+      } else {
+        extra = '<p class="dim">Target hit — ' + esc(String(tw)) + " lb.</p>";
+      }
+    }
+    card.appendChild(el('<div class="weight-big"><strong>' + esc(String(lastM.weight)) + "</strong><span>lb</span></div>" +
+      '<p class="dim">' + esc(dTxt) + " · " + esc(fmtDate(lastM.date)) + "</p>" + extra));
+  }
+  var b = el('<button class="ghost-button">Weigh in</button>');
+  b.addEventListener("click", function () { setTab("body"); });
+  card.appendChild(b);
+  return card;
+}
+
+function homeView() {
+  var s = el('<section class="page-section"></section>');
+  var name = (lsGet(LS_USER_NAME, "") || "").trim();
+  s.appendChild(el('<div class="dash-hero"><span class="hero-metal">HOME</span><h1>' +
+    esc(dayGreeting() + (name ? ", " + name : "")) + ".</h1>" +
+    "<p>" + esc(fmtDate(todayStr())) + "</p></div>"));
+  var grid = el('<div class="dash-grid"></div>');
+  grid.appendChild(challengeCard());
+  grid.appendChild(nextWorkoutCard());
+  grid.appendChild(goalTimelineCard());
+  grid.appendChild(waistCard());
+  grid.appendChild(weightCard());
+  s.appendChild(grid);
+  var nudge = checkinNudge();
+  if (nudge) s.appendChild(nudge);
+  return s;
+}
+
 /* ---------------- Train: home ---------------- */
 function trainHome() {
   var next = null, other = null;
@@ -371,7 +615,7 @@ function trainHome() {
 }
 
 function startWorkout(workoutId) {
-  api("startWorkout", { workout_id: workoutId })
+  return api("startWorkout", { workout_id: workoutId })
     .then(refresh).then(render)
     .catch(function (err) { toast("Couldn\u2019t start: " + err.message); });
 }
@@ -792,6 +1036,7 @@ var LS_MEAS = "ght_meas_v1";
 var LS_ONBOARD = "ght_onboarded_v1";
 
 var TAPE_FIELDS = [
+  { k: "height", label: "Height", unit: "in" },
   { k: "weight", label: "Body weight", unit: "lb" },
   { k: "neck", label: "Neck", unit: "in" },
   { k: "shoulders", label: "Shoulders", unit: "in" },
@@ -832,7 +1077,7 @@ var OB = { step: 1, stats: {}, goal: null, deadline: "" };
 
 function showOnboarding() {
   document.body.classList.add("onboarding");
-  OB = { step: 1, stats: {}, goal: null, deadline: "" };
+  OB = { step: 1, stats: {}, goal: null, deadline: "", name: "", tweight: "" };
   renderOnboard();
 }
 function renderOnboard() {
@@ -878,15 +1123,39 @@ function readMeasInputs(root) {
 function onboardingView() {
   var s;
   if (OB.step === 1) {
-    s = obShell("Where are you starting from?", "Log what you've got — weight and tape measurements. Skip anything you don't have.");
-    var grid = measInputs(OB.stats);
-    s.appendChild(grid);
+    s = obShell("The basics", "Four numbers and your name — that's all we need to set your targets.");
+    var form = el('<div class="ob-simple"></div>');
+    function obField(label, unit, opts) {
+      opts = opts || {};
+      var lab = el('<label class="ob-field"><span>' + esc(label) + (unit ? " (" + esc(unit) + ")" : "") + "</span></label>");
+      var inp = document.createElement("input");
+      if (opts.text) { inp.type = "text"; } else { inp.type = "number"; inp.step = "0.25"; inp.min = "0"; inp.inputMode = "decimal"; }
+      if (opts.placeholder) inp.placeholder = opts.placeholder;
+      inp.value = opts.value || "";
+      inp.setAttribute("aria-label", label);
+      lab.appendChild(inp);
+      form.appendChild(lab);
+      return inp;
+    }
+    var nameI = obField("Your name", "", { text: true, value: OB.name, placeholder: "e.g. Alex" });
+    var hI = obField("Height", "in", { value: OB.stats.height || "", placeholder: "e.g. 72" });
+    var wI = obField("Weight", "lb", { value: OB.stats.weight || "", placeholder: "e.g. 195" });
+    var waI = obField("Waist at navel", "in", { value: OB.stats.waist || "", placeholder: "e.g. 34" });
+    var twI = obField("Target weight", "lb", { value: OB.tweight, placeholder: "optional" });
+    s.appendChild(form);
+    s.appendChild(el('<p class="ob-sub">Waist target is simple: keep it under half your height. At 72" tall, that\u2019s 36".</p>'));
     var row = el('<div class="ob-row"></div>');
-    var skip = el('<button class="ghost-button">Skip</button>');
-    skip.addEventListener("click", function () { OB.step = 2; renderOnboard(); });
     var next = el('<button class="primary-button">Continue</button>');
-    next.addEventListener("click", function () { OB.stats = readMeasInputs(grid); OB.step = 2; renderOnboard(); });
-    row.appendChild(skip); row.appendChild(next);
+    next.addEventListener("click", function () {
+      OB.name = nameI.value.trim();
+      OB.stats = {};
+      if (hI.value.trim() !== "" && !isNaN(Number(hI.value))) OB.stats.height = Number(hI.value);
+      if (wI.value.trim() !== "" && !isNaN(Number(wI.value))) OB.stats.weight = Number(wI.value);
+      if (waI.value.trim() !== "" && !isNaN(Number(waI.value))) OB.stats.waist = Number(waI.value);
+      OB.tweight = (twI.value.trim() === "" || isNaN(Number(twI.value))) ? "" : Number(twI.value);
+      OB.step = 2; renderOnboard();
+    });
+    row.appendChild(next);
     s.appendChild(row);
   } else if (OB.step === 2) {
     s = obShell("What's the goal?", "This tunes your coach notes — what to watch and when to push.");
@@ -912,7 +1181,8 @@ function onboardingView() {
     start.addEventListener("click", function () {
       if (!OB.goal) { toast("Pick a goal to continue."); return; }
       OB.deadline = dinp.value || "";
-      saveProfile({ goal: OB.goal, deadline: OB.deadline, created_at: new Date().toISOString() });
+      if (OB.name) lsSet(LS_USER_NAME, OB.name);
+      saveProfile({ goal: OB.goal, deadline: OB.deadline, target_weight: OB.tweight || "", created_at: new Date().toISOString() });
       var keys = Object.keys(OB.stats);
       if (keys.length) {
         var m = { id: 1, date: todayStr() };
@@ -921,7 +1191,7 @@ function onboardingView() {
       }
       lsSet(LS_ONBOARD, true);
       document.body.classList.remove("onboarding");
-      setTab("train");
+      setTab("home");
       toast("You're in. Let's work.");
     });
     row2.appendChild(back);
@@ -955,6 +1225,19 @@ function coachInsights() {
   } else {
     out.push({ tone: "good", title: "Solid week — " + recent.length + " sessions",
       body: "This is the pace that builds physiques. Keep stacking weeks like this." });
+  }
+
+  /* 1b — waist-to-height: keep waist under half your height */
+  var lm = latestMeas() || {};
+  var wr = waistRatio(lm.waist, lm.height);
+  if (wr != null) {
+    if (wr >= 0.5) {
+      out.push({ tone: "warn", title: "Waist over half your height",
+        body: "Waist is " + Math.round(wr * 100) + "% of height — target is under 50%. 2–3 treadmill 10K sessions a week plus steady lifting moves this fastest." });
+    } else if (wr >= 0.45) {
+      out.push({ tone: "info", title: "Waist nearing the line",
+        body: "Waist is " + Math.round(wr * 100) + "% of height. Under 50% is the target — keep it there." });
+    }
   }
 
   /* 2 — plateaus: main lifts with no bump in 4+ sessions (on-device only) */
@@ -1510,7 +1793,8 @@ function render() {
   var main = $("main");
   main.innerHTML = "";
   var v;
-  if (tab === "train") v = D.active_session ? workoutLogger() : trainHome();
+  if (tab === "home") v = homeView();
+  else if (tab === "train") v = D.active_session ? workoutLogger() : trainHome();
   else if (tab === "body") v = bodyView();
   else if (tab === "history") v = historyView();
   else if (tab === "program") v = programView();
