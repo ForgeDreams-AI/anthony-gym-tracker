@@ -160,6 +160,33 @@ function seedProgram(seed) {
 }
 function normName(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
 function activeExercises(w) { return (w.exercises || []).filter(function (x) { return !x.retired; }); }
+/* Shared-weight sync: one exercise name = one working weight everywhere.
+   When a weight is established, bumped, held, edited, or deloaded in one
+   workout, every other workout with the same exercise (normalized name match)
+   carries the same weight. Nobody logs the same lift twice. */
+function syncSharedWeight(source) {
+  if (!Local.db || !source) return;
+  var nm = normName(source.name);
+  Local.db.workouts.forEach(function (w) {
+    w.exercises.forEach(function (x) {
+      if (x.id !== source.id && normName(x.name) === nm) {
+        x.current_weight = source.current_weight;
+        x.last_adjustment = source.last_adjustment;
+        x.sessions_since_bump = source.sessions_since_bump;
+      }
+    });
+  });
+}
+function sharedWeightFor(name) {
+  if (!Local.db) return null;
+  var nm = normName(name), found = null;
+  Local.db.workouts.forEach(function (w) {
+    w.exercises.forEach(function (x) {
+      if (!x.retired && normName(x.name) === nm && x.current_weight != null) found = x.current_weight;
+    });
+  });
+  return found;
+}
 
 function applyProgramUpdate(seed) {
   var db = Local.db;
@@ -212,6 +239,16 @@ function applyProgramUpdate(seed) {
       seen[nm] = true;
     });
     w.exercises.forEach(function (x) { if (!seen[normName(x.name)]) x.retired = 1; });
+  });
+  /* Backfill: program exercises that arrived with no weight inherit the shared
+     weight when the same exercise already lives in another workout. */
+  db.workouts.forEach(function (w) {
+    w.exercises.forEach(function (x) {
+      if (x.current_weight == null && !x.retired) {
+        var sw = sharedWeightFor(x.name);
+        if (sw != null) x.current_weight = sw;
+      }
+    });
   });
   db.program = newP;
   Local.save();
@@ -334,6 +371,7 @@ var LocalApi = {
         x.current_weight = top;
         x.last_adjustment = top == null ? "—" : "baseline " + top + " lb";
         x.sessions_since_bump = 0;
+        if (top != null) syncSharedWeight(x);
         return;
       }
       /* Progression judges every rendered working set — the headline lift's
@@ -350,6 +388,7 @@ var LocalApi = {
         x.sessions_since_bump = (x.sessions_since_bump || 0) + 1;
         x.last_adjustment = (x.current_weight == null ? "—" : x.current_weight + " lb") + " · hold";
       }
+      syncSharedWeight(x);
     });
     sess.completed_at = new Date().toISOString();
     var sorted = Local.sortedWorkouts(), idx = -1;
@@ -364,6 +403,7 @@ var LocalApi = {
     if (!x) return Promise.reject(new Error("Exercise not found"));
     x.current_weight = (p.current_weight === "" || p.current_weight == null) ? null : Number(p.current_weight);
     x.increment = Number(p.increment) || 0;
+    syncSharedWeight(x);
     Local.save();
     return Promise.resolve({ ok: true });
   },
@@ -377,12 +417,16 @@ var LocalApi = {
     db.workouts.forEach(function (w) { if (w.position > maxPos) maxPos = w.position; });
     var eid = Local.nextId(db.workouts.reduce(function (a, w) { return a.concat(w.exercises); }, []));
     var exs = list.map(function (ex, i) {
+      /* New custom exercise with a name that already exists elsewhere starts
+         at the shared working weight instead of blank. */
+      var typed = (ex.current_weight === "" || ex.current_weight == null) ? null : Number(ex.current_weight);
+      var start = typed != null ? typed : sharedWeightFor(ex.name);
       return {
         id: eid + i, workout_id: wid, name: String(ex.name || "Exercise").slice(0, 80),
         target_sets: Math.max(1, Math.min(12, Number(ex.target_sets) || 3)),
         min_reps: Math.max(1, Number(ex.min_reps) || 8),
         max_reps: Math.max(Number(ex.min_reps) || 8, Number(ex.max_reps) || 12),
-        current_weight: (ex.current_weight === "" || ex.current_weight == null) ? null : Number(ex.current_weight),
+        current_weight: start,
         increment: Number(ex.increment) || 5,
         position: i + 1, last_adjustment: "",
         kind: "main", template: "standard",
@@ -1566,6 +1610,7 @@ function tweakSuggestions() {
             lx.current_weight = w2;
             lx.sessions_since_bump = 0;
             lx.last_adjustment = "deload → " + w2 + " lb";
+            syncSharedWeight(lx);
             Local.save();
           }
         });
