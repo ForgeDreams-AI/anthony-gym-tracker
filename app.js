@@ -111,7 +111,7 @@ var Local = {
     return open;
   },
   seed: function (seed) {
-    var db = { workouts: [], sessions: [], sets: [], meta: {} };
+    var db = { workouts: [], sessions: [], sets: [], meta: {}, program: seedProgram(seed) };
     var wid = 1, eid = 1;
     seed.workouts.forEach(function (w, wi) {
       var exs = w.exercises.map(function (x, xi) {
@@ -141,6 +141,103 @@ var Local = {
     return db;
   }
 };
+
+/* ---------------- Versioned program ("what Anthony is doing now") ----------------
+   The seed ships a program object {name, version, updated, note, history[]}.
+   Every boot compares the seed's program version to the stored one; when the
+   seed is newer, exercises merge by name (working weights ALWAYS preserved),
+   removed moves are retired (history keeps resolving), and the seed's own
+   history becomes the program history. */
+function seedProgram(seed) {
+  var p = (seed && seed.program) || {};
+  return {
+    name: p.name || "My split",
+    version: p.version || "2026-10",
+    updated: p.updated || "",
+    note: p.note || "",
+    history: (p.history || []).slice()
+  };
+}
+function normName(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+function activeExercises(w) { return (w.exercises || []).filter(function (x) { return !x.retired; }); }
+
+function applyProgramUpdate(seed) {
+  var db = Local.db;
+  var newP = seedProgram(seed);
+  if (db.program && db.program.version === newP.version) return false;
+  var eidMax = 0;
+  db.workouts.forEach(function (w) {
+    w.exercises.forEach(function (x) { if (x.id > eidMax) eidMax = x.id; });
+  });
+  seed.workouts.forEach(function (sw, wi) {
+    var w = null;
+    db.workouts.forEach(function (c) { if (c.key === sw.key) w = c; });
+    if (!w) {
+      w = { id: Local.nextId(db.workouts), key: sw.key, name: sw.name, emphasis: sw.emphasis, position: wi + 1, custom: 0, exercises: [] };
+      db.workouts.push(w);
+    } else {
+      w.name = sw.name; w.emphasis = sw.emphasis; w.position = wi + 1;
+    }
+    var seen = {};
+    sw.exercises.forEach(function (sx, xi) {
+      var nm = normName(sx.name);
+      var ex = null;
+      w.exercises.forEach(function (c) { if (normName(c.name) === nm) ex = c; });
+      if (ex) {
+        ex.target_sets = sx.target_sets; ex.min_reps = sx.min_reps; ex.max_reps = sx.max_reps;
+        ex.increment = sx.increment;
+        ex.kind = (sx.kind === "accessory" ? "accessory" : "main");
+        ex.template = (sx.template === "power" ? "power" : "standard");
+        ex.headline = (sx.headline === true);
+        ex.warmup_sets = (sx.warmup_sets == null ? 2 : sx.warmup_sets);
+        ex.warmup_pct = (sx.warmup_pct == null ? 60 : sx.warmup_pct);
+        ex.warmup_reps = (sx.warmup_reps == null ? 5 : sx.warmup_reps);
+        ex.retired = 0; ex.position = xi + 1;
+      } else {
+        eidMax++;
+        w.exercises.push({
+          id: eidMax, workout_id: w.id, name: sx.name,
+          target_sets: sx.target_sets, min_reps: sx.min_reps, max_reps: sx.max_reps,
+          current_weight: (sx.current_weight == null ? null : sx.current_weight),
+          increment: sx.increment, position: xi + 1, last_adjustment: "",
+          kind: (sx.kind === "accessory" ? "accessory" : "main"),
+          template: (sx.template === "power" ? "power" : "standard"),
+          headline: (sx.headline === true),
+          warmup_sets: (sx.warmup_sets == null ? 2 : sx.warmup_sets),
+          warmup_pct: (sx.warmup_pct == null ? 60 : sx.warmup_pct),
+          warmup_reps: (sx.warmup_reps == null ? 5 : sx.warmup_reps),
+          sessions_since_bump: 0, retired: 0
+        });
+      }
+      seen[nm] = true;
+    });
+    w.exercises.forEach(function (x) { if (!seen[normName(x.name)]) x.retired = 1; });
+  });
+  db.program = newP;
+  Local.save();
+  return true;
+}
+
+function maybeApplyProgramUpdate() {
+  if (API_URL || !Local.db) return Promise.resolve(false);
+  return fetch("seed-routine.json").then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (seed) {
+      if (!seed || !seed.program) return false;
+      if (!Local.db.program) { Local.db.program = seedProgram(seed); Local.save(); return false; }
+      if (Local.db.program.version === seed.program.version) return false;
+      var ok = applyProgramUpdate(seed);
+      if (ok) toast("Program updated to " + seed.program.version + " — your working weights carried over.");
+      return ok;
+    }).catch(function () { return false; });
+}
+
+function programLabel() {
+  var p = (Local.db && Local.db.program) || { name: "My split", version: "", updated: "" };
+  var bits = [p.name];
+  if (p.version) bits.push("v" + p.version);
+  if (p.updated) bits.push("updated " + p.updated);
+  return bits.join(" · ");
+}
 
 var LocalApi = {
   dashboard: function () {
@@ -563,16 +660,18 @@ function trainHome() {
   if (!next) next = D.workouts[0];
   if (!next) return emptyState("—", "Loading your routine.", "Your workout rotation will be ready in a moment.");
   var baselineNext = isBaselineWorkout(next);
+  var nextExs = activeExercises(next);
   var setsForNext = function (e) { return workingSets(e, next, baselineNext); };
-  var totalSets = next.exercises.reduce(function (s, e) { return s + setsForNext(e); }, 0);
+  var totalSets = nextExs.reduce(function (s, e) { return s + setsForNext(e); }, 0);
+  var prog = (Local.db && Local.db.program) || null;
 
   var s = el("<section></section>");
   var hero = el(
     '<div class="next-hero">' +
-      '<div class="hero-metal">NEXT IN ROTATION</div>' +
+      '<div class="hero-metal">' + esc((prog ? prog.name : "My split").toUpperCase()) + (prog && prog.version ? " · V" + esc(prog.version) : "") + "</div>" +
       "<h1>" + esc(next.name) + "</h1>" +
-      '<p class="hero-emphasis">' + esc(next.emphasis) + "</p>" +
-      '<div class="hero-stats"><div><strong>' + next.exercises.length + "</strong><span>moves</span></div>" +
+      '<p class="hero-emphasis">' + esc(next.emphasis) + (prog && prog.updated ? ' <span class="hero-updated">· split updated ' + esc(prog.updated) + "</span>" : "") + "</p>" +
+      '<div class="hero-stats"><div><strong>' + nextExs.length + "</strong><span>moves</span></div>" +
       "<div><strong>" + totalSets + "</strong><span>" + (baselineNext ? "sets" : "working sets") + "</span></div></div>" +
       '<button class="primary-button primary-button--light">Start ' + esc(next.name) + "</button>" +
     "</div>"
@@ -592,7 +691,7 @@ function trainHome() {
   s.appendChild(head);
 
   var list = el('<div class="preview-list"></div>');
-  next.exercises.forEach(function (e, i) {
+  nextExs.forEach(function (e, i) {
     list.appendChild(el(
       '<div class="preview-row">' +
         '<span class="preview-index">' + String(i + 1).padStart(2, "0") + "</span>" +
@@ -604,13 +703,27 @@ function trainHome() {
   });
   s.appendChild(list);
 
-  if (other) {
-    var alt = el(
-      '<button class="alternate-button"><span>Need the other day?</span><strong>Start ' + esc(other.name) + " →</strong></button>"
+  /* Full split picker — every day of the current program, tappable. */
+  var pickHead = el(
+    '<div class="section-heading"><div><span>THE SPLIT</span><h2>Pick your day</h2></div>' +
+    "<p>" + esc(programLabel()) + "</p></div>"
+  );
+  s.appendChild(pickHead);
+  var pickList = el('<div class="preview-list"></div>');
+  Local.sortedWorkouts().forEach(function (w, i) {
+    var isNext = w.id === next.id;
+    var wExs = activeExercises(w);
+    var row = el(
+      '<button class="preview-row day-pick' + (isNext ? " day-pick--next" : "") + '">' +
+        '<span class="preview-index">' + String(i + 1).padStart(2, "0") + "</span>" +
+        "<div><strong>" + esc(w.name) + (w.custom ? ' <span class="custom-tag">custom</span>' : "") + (isNext ? ' <span class="next-tag">next</span>' : "") + "</strong><span>" + esc(w.emphasis || "") + "</span></div>" +
+        '<div class="preview-weight"><strong>' + wExs.length + "</strong><span>moves</span></div>" +
+      "</button>"
     );
-    alt.addEventListener("click", function () { startWorkout(other.id); });
-    s.appendChild(alt);
-  }
+    row.addEventListener("click", function () { startWorkout(w.id); });
+    pickList.appendChild(row);
+  });
+  s.appendChild(pickList);
   return s;
 }
 
@@ -756,7 +869,8 @@ function workoutLogger() {
 
   var baseline = isBaselineWorkout(workout);
   var setsFor = function (e) { return workingSets(e, workout, baseline); };
-  var total = workout.exercises.reduce(function (s, e) { return s + setsFor(e); }, 0);
+  var liveExs = activeExercises(workout);
+  var total = liveExs.reduce(function (s, e) { return s + setsFor(e); }, 0);
   var s = el("<section class='workout-live'></section>");
   var hero = el(
     '<div class="live-hero"><div><span class="live-dot"></span><span>' + (baseline ? "BASELINE DAY — FIND YOUR WEIGHTS" : "IN PROGRESS") + "</span>" +
@@ -772,7 +886,7 @@ function workoutLogger() {
 
   var stack = el('<div class="exercise-stack"></div>');
   var seenMain = false; /* first main lift of the day gets full warm-ups; later mains get one feeler */
-  workout.exercises.forEach(function (e, i) {
+  liveExs.forEach(function (e, i) {
     var card = el(
       '<article class="exercise-log"><div class="exercise-head">' +
         '<div class="exercise-index">' + String(i + 1).padStart(2, "0") + "</div>" +
@@ -894,11 +1008,37 @@ function exerciseSetting(e, workout) {
 
 function programView() {
   if (!openProgram && D.workouts.length) openProgram = D.workouts[0].id;
+  var prog = (Local.db && Local.db.program) || { name: "My split", version: "", updated: "", note: "", history: [] };
   var s = el(
     '<section class="page-section"><div class="page-title"><span>LOAD CONTROL</span><h1>Simple progression.</h1>' +
     "<p>Hit the top of the range on every set: add the listed increment next time. Miss it: hold the load and beat your reps.</p></div>" +
-    '<div class="rule-strip"><strong>Top of range across all sets</strong><span>\u2192 automatic increase</span></div></section>'
+    '<div class="rule-strip"><strong>Top of range across all sets</strong><span>\u2192 automatic increase</span></div>' +
+    '<div class="program-card"><div class="program-card__meta"><span>WHAT I\u2019M DOING NOW</span></div>' +
+    "<h2>" + esc(prog.name) + "</h2>" +
+    "<p>" + esc([prog.version ? "v" + prog.version : "", prog.updated ? "updated " + prog.updated : ""].filter(Boolean).join(" · ")) + "</p>" +
+    (prog.note ? "<p class=\"program-card__note\">" + esc(prog.note) + "</p>" : "") +
+    "</div></section>"
   );
+  /* Version history — every program change, newest first. */
+  if (prog.history && prog.history.length) {
+    var hHead = el('<div class="section-heading"><div><span>ARCHIVE</span><h2>Past versions</h2></div><p>What the split used to look like.</p></div>');
+    s.appendChild(hHead);
+    var hList = el('<div class="program-history"></div>');
+    prog.history.forEach(function (h) {
+      var moves = [];
+      (h.snapshot || []).forEach(function (w) {
+        moves.push("<div><strong>" + esc(w.name) + "</strong><span>" + esc((w.exercises || []).join(" · ")) + "</span></div>");
+      });
+      hList.appendChild(el(
+        '<div class="history-entry"><div class="history-entry__head"><strong>v' + esc(h.version) + "</strong><span>" + esc(h.updated || "") + "</span></div>" +
+        (h.note ? '<p class="history-entry__note">' + esc(h.note) + "</p>" : "") +
+        '<div class="history-entry__moves">' + moves.join("") + "</div></div>"
+      ));
+    });
+    s.appendChild(hList);
+  }
+  var wHead = el('<div class="section-heading"><div><span>CURRENT</span><h2>This version\u2019s workouts</h2></div><p>Tap a day to adjust its loads.</p></div>');
+  s.appendChild(wHead);
   D.workouts.forEach(function (w) {
     var block = el('<div class="program-block"></div>');
     var head = el('<div class="program-blockhead"></div>');
@@ -916,7 +1056,7 @@ function programView() {
     block.appendChild(head);
     if (openProgram === w.id) {
       var list = el('<div class="setting-list"></div>');
-      w.exercises.forEach(function (e) { list.appendChild(exerciseSetting(e, w)); });
+      activeExercises(w).forEach(function (e) { list.appendChild(exerciseSetting(e, w)); });
       block.appendChild(list);
       if (w.custom) {
         var del = el('<button class="program-delete">Delete this workout</button>');
@@ -1814,7 +1954,7 @@ function boot() {
     prep = Promise.resolve();
     if (!API_URL) Local.load();
   }
-  prep.then(refresh).then(function () {
+  prep.then(refresh).then(function () { return maybeApplyProgramUpdate(); }).then(function () {
     if (!finishOnboardingGate()) { showOnboarding(); return; }
     render();
   }).catch(function () {

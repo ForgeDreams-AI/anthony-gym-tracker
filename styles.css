@@ -340,3 +340,25 @@ body.onboarding .bottom-nav { display: none; }
 .ob-field { display: flex; align-items: center; gap: 12px; }
 .ob-field > span { width: 132px; flex: none; font-size: 13px; color: var(--dim); }
 .ob-field input { flex: 1; height: 48px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0 12px; font-size: 16px; border-radius: 6px; }
+
+/* ---------------- Versioned program ("what I'm doing now") ---------------- */
+.program-card { background: var(--metal); color: #f7f8f6; border-radius: 4px 4px 18px 4px; padding: 16px 18px; margin-top: 14px; position: relative; overflow: hidden; }
+.program-card::after { content: ""; position: absolute; inset: 0 0 auto auto; width: 86px; height: 7px; background: var(--accent); }
+.program-card__meta span { font-size: 11px; font-weight: 850; letter-spacing: .16em; color: #aeb5af; }
+.program-card h2 { margin: 6px 0 2px; font-size: 20px; color: #f7f8f6; }
+.program-card p { margin: 2px 0; color: #b8bdb9; font-size: 13px; }
+.program-card__note { color: #f7f8f6 !important; }
+.program-history { display: grid; gap: 10px; margin-bottom: 18px; }
+.history-entry { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.history-entry__head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.history-entry__head strong { font-size: 15px; }
+.history-entry__head span { color: var(--dim); font-size: 12px; }
+.history-entry__note { color: var(--dim); font-size: 13px; margin: 0 0 6px; }
+.history-entry__moves div { margin: 4px 0; }
+.history-entry__moves strong { display: block; font-size: 13px; }
+.history-entry__moves span { color: var(--dim); font-size: 12px; }
+.day-pick { width: 100%; text-align: left; cursor: pointer; }
+.day-pick--next { border-color: var(--accent); }
+.next-tag, .custom-tag { font-size: 10px; letter-spacing: 1px; padding: 2px 6px; border-radius: 4px; background: var(--accent); color: #111; font-weight: 700; vertical-align: middle; }
+.custom-tag { background: transparent; border: 1px solid var(--dim); color: var(--dim); }
+.hero-updated { color: var(--dim); font-size: 12px; }
