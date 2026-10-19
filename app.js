@@ -234,9 +234,28 @@ function maybeApplyProgramUpdate() {
 function programLabel() {
   var p = (Local.db && Local.db.program) || { name: "My split", version: "", updated: "" };
   var bits = [p.name];
-  if (p.version) bits.push("v" + p.version);
+  if (p.version) bits.push(vlabel(p.version));
   if (p.updated) bits.push("updated " + p.updated);
   return bits.join(" · ");
+}
+/* Version labels are plain "v1", "v2", ... — never double the v. */
+function vlabel(v) {
+  v = String(v == null ? "" : v);
+  return v.charAt(0).toLowerCase() === "v" ? v : "v" + v;
+}
+function fullWorkoutSnapshot() {
+  return Local.sortedWorkouts().filter(function (w) { return !w.custom; }).map(function (w) {
+    return {
+      key: w.key, name: w.name, emphasis: w.emphasis,
+      exercises: activeExercises(w).map(function (x) {
+        return {
+          name: x.name, target_sets: x.target_sets, min_reps: x.min_reps, max_reps: x.max_reps,
+          current_weight: x.current_weight, increment: x.increment,
+          kind: x.kind, template: x.template, headline: !!x.headline
+        };
+      })
+    };
+  });
 }
 
 var LocalApi = {
@@ -668,7 +687,7 @@ function trainHome() {
   var s = el("<section></section>");
   var hero = el(
     '<div class="next-hero">' +
-      '<div class="hero-metal">' + esc((prog ? prog.name : "My split").toUpperCase()) + (prog && prog.version ? " · V" + esc(prog.version) : "") + "</div>" +
+      '<div class="hero-metal">' + esc((prog ? prog.name : "My split").toUpperCase()) + (prog && prog.version ? " · " + esc(vlabel(prog.version).toUpperCase()) : "") + "</div>" +
       "<h1>" + esc(next.name) + "</h1>" +
       '<p class="hero-emphasis">' + esc(next.emphasis) + (prog && prog.updated ? ' <span class="hero-updated">· split updated ' + esc(prog.updated) + "</span>" : "") + "</p>" +
       '<div class="hero-stats"><div><strong>' + nextExs.length + "</strong><span>moves</span></div>" +
@@ -1015,7 +1034,7 @@ function programView() {
     '<div class="rule-strip"><strong>Top of range across all sets</strong><span>\u2192 automatic increase</span></div>' +
     '<div class="program-card"><div class="program-card__meta"><span>WHAT I\u2019M DOING NOW</span></div>' +
     "<h2>" + esc(prog.name) + "</h2>" +
-    "<p>" + esc([prog.version ? "v" + prog.version : "", prog.updated ? "updated " + prog.updated : ""].filter(Boolean).join(" · ")) + "</p>" +
+    "<p>" + esc([prog.version ? vlabel(prog.version) : "", prog.updated ? "updated " + prog.updated : ""].filter(Boolean).join(" · ")) + "</p>" +
     (prog.note ? "<p class=\"program-card__note\">" + esc(prog.note) + "</p>" : "") +
     "</div></section>"
   );
@@ -1026,11 +1045,24 @@ function programView() {
     var hList = el('<div class="program-history"></div>');
     prog.history.forEach(function (h) {
       var moves = [];
-      (h.snapshot || []).forEach(function (w) {
-        moves.push("<div><strong>" + esc(w.name) + "</strong><span>" + esc((w.exercises || []).join(" · ")) + "</span></div>");
-      });
+      var full = h.workouts || [];
+      if (full.length) {
+        full.forEach(function (w) {
+          var exLines = (w.exercises || []).map(function (x) {
+            var det = x.target_sets + " × " + x.min_reps + "\u2013" + x.max_reps +
+              (x.current_weight == null ? "" : " @ " + x.current_weight + " lb") +
+              (x.headline ? " · headline" : "");
+            return esc(x.name) + " — " + esc(det);
+          });
+          moves.push("<div><strong>" + esc(w.name) + "</strong><span>" + exLines.join("<br>") + "</span></div>");
+        });
+      } else {
+        (h.snapshot || []).forEach(function (w) {
+          moves.push("<div><strong>" + esc(w.name) + "</strong><span>" + esc((w.exercises || []).join(" · ")) + "</span></div>");
+        });
+      }
       hList.appendChild(el(
-        '<div class="history-entry"><div class="history-entry__head"><strong>v' + esc(h.version) + "</strong><span>" + esc(h.updated || "") + "</span></div>" +
+        '<div class="history-entry"><div class="history-entry__head"><strong>' + esc(vlabel(h.version)) + "</strong><span>" + esc(h.updated || "") + "</span></div>" +
         (h.note ? '<p class="history-entry__note">' + esc(h.note) + "</p>" : "") +
         '<div class="history-entry__moves">' + moves.join("") + "</div></div>"
       ));
