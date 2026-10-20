@@ -477,6 +477,75 @@ var TREADMILL_TIMER_URL = "https://muse.ai/s/treadmill-timer-xoxb6axmxqavwog";
 function get10k() { return lsGet(LS_10K, []); }
 function save10k(a) { lsSet(LS_10K, a); }
 
+/* ---------------- Benchmark challenges ----------------
+   Named circuits (Murph, Nickel & Dimes, Cindy, ...) picked from box
+   buttons on Home, with the treadmill 10K as one of the choices.
+   Attempts are logged on-device; the best result is the score to beat. */
+var LS_BENCH = "ght_bench_v1";
+var benchSel = null;
+var BENCHMARKS = [
+  { id: "treadmill", name: "10K Steps in an Hour", tag: "Treadmill challenge", kind: "steps",
+    scheme: ["Treadmill · 6 × 10-minute blocks", "Goal: 10,000 steps inside the hour."] },
+  { id: "murph", name: "Murph", tag: "For time", kind: "time",
+    scheme: ["Run 1 mile", "100 pull-ups · 200 push-ups · 300 air squats", "Run 1 mile", "Break the middle reps up however you want. Optional: 20 lb vest."] },
+  { id: "half-murph", name: "Half Murph", tag: "For time", kind: "time",
+    scheme: ["Run 800 m", "50 pull-ups · 100 push-ups · 150 air squats", "Run 800 m", "Same rules as Murph, half the work."] },
+  { id: "nickel-dimes", name: "Nickel & Dimes", tag: "10 rounds · every minute", kind: "rounds", goal: 10,
+    scheme: ["Every minute for 10 minutes:", "5 pull-ups + 10 push-ups", "Score is how many of the 10 rounds you finish."] },
+  { id: "cindy", name: "Cindy", tag: "20 min · as many rounds as possible", kind: "rounds",
+    scheme: ["As many rounds as possible in 20 minutes:", "5 pull-ups · 10 push-ups · 15 air squats", "Score is rounds finished. Note any extra reps in the log note."] },
+  { id: "engine-13", name: "Engine 13", tag: "Station circuit · for time", kind: "time",
+    scheme: ["5 rounds for time:", "Sled pull, down and back", "15 air squats", "Stairs, up and down", "10 push-ups"] }
+];
+function benchById(id) { for (var i = 0; i < BENCHMARKS.length; i++) if (BENCHMARKS[i].id === id) return BENCHMARKS[i]; return null; }
+function getBench() { return lsGet(LS_BENCH, []); }
+function saveBench(a) { lsSet(LS_BENCH, a); }
+function benchAttempts(id) {
+  if (id === "treadmill") return get10k().map(function (a) { return { date: a.date, completed: a.completed, steps: a.steps, note: a.note || "" }; });
+  return getBench().filter(function (a) { return a.challengeId === id; });
+}
+function fmtTimeSec(sec) {
+  sec = Math.max(0, Math.round(sec));
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+function parseTime(str) {
+  str = String(str || "").trim();
+  if (!str) return null;
+  if (str.indexOf(":") >= 0) {
+    var parts = str.split(":");
+    var m = parseInt(parts[0], 10), s = parseInt(parts[1] || "0", 10);
+    if (isNaN(m) || isNaN(s)) return null;
+    return m * 60 + s;
+  }
+  var mins = parseFloat(str);
+  if (isNaN(mins)) return null;
+  return Math.round(mins * 60);
+}
+function benchResultText(b, a) {
+  if (!a) return "—";
+  if (b.kind === "time" && a.timeSec != null) return fmtTimeSec(a.timeSec);
+  if (b.kind === "rounds" && a.rounds != null) return a.rounds + (b.goal ? " / " + b.goal : "") + " rounds";
+  if (b.kind === "steps") return a.completed ? "Completed" : "Attempted";
+  return "—";
+}
+function benchBest(b) {
+  var atts = benchAttempts(b.id);
+  if (!atts.length) return null;
+  if (b.kind === "time") {
+    var best = null;
+    atts.forEach(function (a) { if (a.timeSec != null && (best == null || a.timeSec < best)) best = a.timeSec; });
+    return best == null ? null : fmtTimeSec(best);
+  }
+  if (b.kind === "rounds") {
+    var br = 0;
+    atts.forEach(function (a) { if (a.rounds != null && a.rounds > br) br = a.rounds; });
+    return br ? (br + (b.goal ? " / " + b.goal : "") + " rounds") : null;
+  }
+  var done = atts.filter(function (a) { return a.completed; }).length;
+  return done ? done + " completed" : null;
+}
+
 /* ---------------- waist-to-height target ----------------
    Keep waist under half your height. One number to remember. */
 function waistTarget(heightIn) {
@@ -501,8 +570,9 @@ function dashStat(value, label) {
 
 function challengeCard() {
   var card = el('<div class="dash-card"></div>');
-  card.appendChild(el('<div class="dash-kicker">CHALLENGE</div><h2>10K Steps in an Hour</h2>' +
-    '<p class="dim">Treadmill · 6 × 10-minute blocks. Log every attempt — completions are what count.</p>'));
+  card.appendChild(el('<div class="dash-kicker">CHALLENGE</div>'));
+  card.appendChild(el("<h2>10K Steps in an Hour</h2>"));
+  card.appendChild(el('<p class="dim">Treadmill · 6 × 10-minute blocks. Log every attempt — completions are what count.</p>'));
   var atts = get10k().slice().sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
   var done = atts.filter(function (a) { return a.completed; }).length;
   var last = atts.length ? atts[atts.length - 1] : null;
@@ -559,6 +629,106 @@ function challengeCard() {
       list.appendChild(el('<div class="challenge-row"><span>' + esc(fmtDate(a.date)) + "</span>" +
         '<strong class="' + (a.completed ? "done" : "tried") + '">' + (a.completed ? "Completed" : "Attempted") + "</strong>" +
         "<span>" + (a.steps != null ? esc(String(a.steps)) + " steps" : "") + "</span></div>"));
+    });
+    card.appendChild(list);
+  }
+  return card;
+}
+
+function challengesCard() {
+  var card = el('<div class="dash-card"></div>');
+  card.appendChild(el('<div class="dash-kicker">CHALLENGES</div>'));
+  card.appendChild(el("<h2>Pick your challenge</h2>"));
+  card.appendChild(el('<p class="dim">Benchmark circuits and the treadmill 10K. Tap one, run it, log it — then beat it.</p>'));
+  var grid = el('<div class="bench-grid"></div>');
+  BENCHMARKS.forEach(function (b) {
+    var best = benchBest(b);
+    var btn = el('<button type="button" class="bench-box' + (benchSel === b.id ? " sel" : "") + '">' +
+      "<strong>" + esc(b.name) + "</strong><span>" + esc(b.tag) + "</span>" +
+      (best ? "<em>Best: " + esc(best) + "</em>" : '<em class="none">No attempts yet</em>') + "</button>");
+    btn.addEventListener("click", function () {
+      benchSel = (benchSel === b.id) ? null : b.id;
+      render();
+    });
+    grid.appendChild(btn);
+  });
+  card.appendChild(grid);
+  return card;
+}
+
+function benchDetailCard(b) {
+  var card = el('<div class="dash-card"></div>');
+  card.appendChild(el('<div class="dash-kicker">CHALLENGE</div><h2>' + esc(b.name) + "</h2>"));
+  var sch = el('<div class="bench-scheme"></div>');
+  b.scheme.forEach(function (line) { sch.appendChild(el("<p>" + esc(line) + "</p>")); });
+  card.appendChild(sch);
+
+  var atts = benchAttempts(b.id).slice().sort(function (a, z) { return a.date < z.date ? -1 : (a.date > z.date ? 1 : 0); });
+  var last = atts.length ? atts[atts.length - 1] : null;
+  var best = benchBest(b);
+  card.appendChild(el('<div class="dash-stats">' +
+    dashStat(atts.length, "attempts") +
+    dashStat(best || "—", "best") +
+    dashStat(last ? benchResultText(b, last) : "—", "last result") + "</div>"));
+
+  var btnRow = el('<div class="dash-actions"></div>');
+  var logBtn = el('<button class="primary-button">Log attempt</button>');
+  btnRow.appendChild(logBtn);
+  card.appendChild(btnRow);
+
+  var form = el('<div class="challenge-form" hidden></div>');
+  var dRow = el('<div class="cf-row"></div>');
+  var dinp = el('<input type="date" aria-label="Attempt date">');
+  dinp.value = todayStr();
+  dRow.appendChild(el("<span>Date</span>")); dRow.appendChild(dinp);
+  form.appendChild(dRow);
+  var rRow = el('<div class="cf-row"></div>');
+  var rinp;
+  if (b.kind === "time") {
+    rinp = el('<input type="text" inputmode="numeric" placeholder="e.g. 38:24" aria-label="Finish time">');
+    rRow.appendChild(el("<span>Time</span>"));
+  } else {
+    rinp = el('<input type="number" inputmode="numeric" min="0" placeholder="' + (b.goal ? "of " + b.goal : "rounds") + '" aria-label="Rounds">');
+    rRow.appendChild(el("<span>Rounds</span>"));
+  }
+  rRow.appendChild(rinp);
+  form.appendChild(rRow);
+  var nRow = el('<div class="cf-row"></div>');
+  var ninp = el('<input type="text" placeholder="How\u2019d it feel? (optional)" aria-label="Note">');
+  nRow.appendChild(el("<span>Note</span>")); nRow.appendChild(ninp);
+  form.appendChild(nRow);
+  var fBtns = el('<div class="dash-actions"></div>');
+  var save = el('<button class="primary-button">Save</button>');
+  var cancel = el('<button class="ghost-button">Cancel</button>');
+  fBtns.appendChild(save); fBtns.appendChild(cancel);
+  form.appendChild(fBtns);
+  card.appendChild(form);
+  logBtn.addEventListener("click", function () { form.hidden = !form.hidden; });
+  cancel.addEventListener("click", function () { form.hidden = true; });
+  save.addEventListener("click", function () {
+    if (!dinp.value) { toast("Pick a date."); return; }
+    var att = { id: Date.now(), challengeId: b.id, date: dinp.value, note: ninp.value.trim() };
+    if (b.kind === "time") {
+      att.timeSec = parseTime(rinp.value);
+      if (att.timeSec == null || att.timeSec <= 0) { toast("Enter your finish time, like 38:24."); return; }
+    } else {
+      att.rounds = rinp.value.trim() === "" ? null : Math.max(0, parseInt(rinp.value, 10) || 0);
+      if (att.rounds == null) { toast("Enter how many rounds you finished."); return; }
+    }
+    var all = getBench();
+    all.push(att);
+    saveBench(all);
+    toast("Logged. Now go beat it.");
+    render();
+  });
+
+  if (atts.length) {
+    var list = el('<div class="challenge-list"></div>');
+    atts.slice(-4).reverse().forEach(function (a) {
+      var isBest = best && benchResultText(b, a) === best;
+      list.appendChild(el('<div class="challenge-row"><span>' + esc(fmtDate(a.date)) + "</span>" +
+        '<strong class="' + (isBest ? "done" : "tried") + '">' + esc(benchResultText(b, a)) + "</strong>" +
+        "<span>" + esc(a.note || "") + "</span></div>"));
     });
     card.appendChild(list);
   }
@@ -702,7 +872,10 @@ function homeView() {
     esc(dayGreeting() + (name ? ", " + name : "")) + ".</h1>" +
     "<p>" + esc(fmtDate(todayStr())) + "</p></div>"));
   var grid = el('<div class="dash-grid"></div>');
-  grid.appendChild(challengeCard());
+  grid.appendChild(challengesCard());
+  var selB = benchSel ? benchById(benchSel) : null;
+  if (selB && selB.id === "treadmill") grid.appendChild(challengeCard());
+  else if (selB) grid.appendChild(benchDetailCard(selB));
   grid.appendChild(nextWorkoutCard());
   grid.appendChild(goalTimelineCard());
   grid.appendChild(waistCard());
