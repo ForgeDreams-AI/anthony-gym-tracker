@@ -490,8 +490,8 @@ var BENCHMARKS = [
     scheme: ["Run 1 mile", "100 pull-ups · 200 push-ups · 300 air squats", "Run 1 mile", "Break the middle reps up however you want. Optional: 20 lb vest."] },
   { id: "half-murph", name: "Half Murph", tag: "For time", kind: "time",
     scheme: ["Run 800 m", "50 pull-ups · 100 push-ups · 150 air squats", "Run 800 m", "Same rules as Murph, half the work."] },
-  { id: "nickel-dimes", name: "Nickel & Dimes", tag: "10 rounds · every minute", kind: "rounds", goal: 10,
-    scheme: ["Every minute for 10 minutes:", "5 pull-ups + 10 push-ups", "Score is how many of the 10 rounds you finish."] },
+  { id: "nickel-dimes", name: "Nickel & Dimes", tag: "No time limit · as long as possible", kind: "endurance",
+    scheme: ["5 pull-ups + 10 push-ups, round after round.", "No clock and no time limit — go until you can't finish a round.", "We track your rounds, total pull-ups, total push-ups, and how long you lasted."] },
   { id: "cindy", name: "Cindy", tag: "20 min · as many rounds as possible", kind: "rounds",
     scheme: ["As many rounds as possible in 20 minutes:", "5 pull-ups · 10 push-ups · 15 air squats", "Score is rounds finished. Note any extra reps in the log note."] },
   { id: "engine-13", name: "Engine 13", tag: "Station circuit · for time", kind: "time",
@@ -525,6 +525,11 @@ function parseTime(str) {
 function benchResultText(b, a) {
   if (!a) return "—";
   if (b.kind === "time" && a.timeSec != null) return fmtTimeSec(a.timeSec);
+  if (b.kind === "endurance" && a.rounds != null) {
+    var tp = a.rounds * 5 + (a.extraPull || 0);
+    var tu = a.rounds * 10 + (a.extraPush || 0);
+    return a.rounds + " rounds · " + tp + " pull-ups · " + tu + " push-ups" + (a.timeSec != null ? " · " + fmtTimeSec(a.timeSec) : "");
+  }
   if (b.kind === "rounds" && a.rounds != null) return a.rounds + (b.goal ? " / " + b.goal : "") + " rounds";
   if (b.kind === "steps") return a.completed ? "Completed" : "Attempted";
   return "—";
@@ -536,6 +541,15 @@ function benchBest(b) {
     var best = null;
     atts.forEach(function (a) { if (a.timeSec != null && (best == null || a.timeSec < best)) best = a.timeSec; });
     return best == null ? null : fmtTimeSec(best);
+  }
+  if (b.kind === "endurance") {
+    var ba = null, bk = -1;
+    atts.forEach(function (a) {
+      if (a.rounds == null) return;
+      var k = a.rounds * 100000 + (a.extraPull || 0) + (a.extraPush || 0);
+      if (k > bk) { bk = k; ba = a; }
+    });
+    return ba ? benchResultText(b, ba) : null;
   }
   if (b.kind === "rounds") {
     var br = 0;
@@ -683,16 +697,35 @@ function benchDetailCard(b) {
   dRow.appendChild(el("<span>Date</span>")); dRow.appendChild(dinp);
   form.appendChild(dRow);
   var rRow = el('<div class="cf-row"></div>');
-  var rinp;
+  var rinp, pinp = null, uinp = null, tinp = null;
   if (b.kind === "time") {
     rinp = el('<input type="text" inputmode="numeric" placeholder="e.g. 38:24" aria-label="Finish time">');
     rRow.appendChild(el("<span>Time</span>"));
+    rRow.appendChild(rinp);
+    form.appendChild(rRow);
+  } else if (b.kind === "endurance") {
+    rinp = el('<input type="number" inputmode="numeric" min="0" placeholder="full rounds" aria-label="Full rounds">');
+    rRow.appendChild(el("<span>Rounds</span>"));
+    rRow.appendChild(rinp);
+    form.appendChild(rRow);
+    var pRow = el('<div class="cf-row"></div>');
+    pinp = el('<input type="number" inputmode="numeric" min="0" placeholder="extra pull-ups on the last round" aria-label="Extra pull-ups">');
+    pRow.appendChild(el("<span>+ Pull-ups</span>")); pRow.appendChild(pinp);
+    form.appendChild(pRow);
+    var uRow = el('<div class="cf-row"></div>');
+    uinp = el('<input type="number" inputmode="numeric" min="0" placeholder="extra push-ups on the last round" aria-label="Extra push-ups">');
+    uRow.appendChild(el("<span>+ Push-ups</span>")); uRow.appendChild(uinp);
+    form.appendChild(uRow);
+    var tRow = el('<div class="cf-row"></div>');
+    tinp = el('<input type="text" inputmode="numeric" placeholder="e.g. 23:10 (optional)" aria-label="Time lasted">');
+    tRow.appendChild(el("<span>Lasted</span>")); tRow.appendChild(tinp);
+    form.appendChild(tRow);
   } else {
     rinp = el('<input type="number" inputmode="numeric" min="0" placeholder="' + (b.goal ? "of " + b.goal : "rounds") + '" aria-label="Rounds">');
     rRow.appendChild(el("<span>Rounds</span>"));
+    rRow.appendChild(rinp);
+    form.appendChild(rRow);
   }
-  rRow.appendChild(rinp);
-  form.appendChild(rRow);
   var nRow = el('<div class="cf-row"></div>');
   var ninp = el('<input type="text" placeholder="How\u2019d it feel? (optional)" aria-label="Note">');
   nRow.appendChild(el("<span>Note</span>")); nRow.appendChild(ninp);
@@ -711,6 +744,13 @@ function benchDetailCard(b) {
     if (b.kind === "time") {
       att.timeSec = parseTime(rinp.value);
       if (att.timeSec == null || att.timeSec <= 0) { toast("Enter your finish time, like 38:24."); return; }
+    } else if (b.kind === "endurance") {
+      att.rounds = rinp.value.trim() === "" ? null : Math.max(0, parseInt(rinp.value, 10) || 0);
+      if (att.rounds == null) { toast("Enter how many full rounds you finished."); return; }
+      att.extraPull = pinp.value.trim() === "" ? 0 : Math.max(0, parseInt(pinp.value, 10) || 0);
+      att.extraPush = uinp.value.trim() === "" ? 0 : Math.max(0, parseInt(uinp.value, 10) || 0);
+      att.timeSec = tinp.value.trim() === "" ? null : parseTime(tinp.value);
+      if (tinp.value.trim() !== "" && att.timeSec == null) { toast("Time lasted should look like 23:10."); return; }
     } else {
       att.rounds = rinp.value.trim() === "" ? null : Math.max(0, parseInt(rinp.value, 10) || 0);
       if (att.rounds == null) { toast("Enter how many rounds you finished."); return; }
