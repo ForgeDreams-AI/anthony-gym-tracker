@@ -103,7 +103,7 @@ var Local = {
     return found;
   },
   sortedWorkouts: function () {
-    return this.db.workouts.slice().sort(function (a, b) { return a.position - b.position; });
+    return this.db.workouts.filter(function (w) { return !w.retired; }).sort(function (a, b) { return a.position - b.position; });
   },
   openSession: function () {
     var open = null;
@@ -123,6 +123,8 @@ var Local = {
           kind: (x.kind === "accessory" ? "accessory" : "main"),
           template: (x.template === "power" ? "power" : "standard"),
           headline: (x.headline === true),
+          exact_sets: (x.exact_sets === true),
+          note: (x.note == null ? "" : String(x.note)),
           warmup_sets: (x.warmup_sets == null ? 2 : x.warmup_sets),
           warmup_pct: (x.warmup_pct == null ? 60 : x.warmup_pct),
           warmup_reps: (x.warmup_reps == null ? 5 : x.warmup_reps),
@@ -159,7 +161,10 @@ function seedProgram(seed) {
   };
 }
 function normName(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
-function activeExercises(w) { return (w.exercises || []).filter(function (x) { return !x.retired; }); }
+function activeExercises(w) {
+  return (w.exercises || []).filter(function (x) { return !x.retired; })
+    .slice().sort(function (a, b) { return (a.position || 0) - (b.position || 0); });
+}
 /* Shared-weight sync: one exercise name = one working weight everywhere.
    When a weight is established, bumped, held, edited, or deloaded in one
    workout, every other workout with the same exercise (normalized name match)
@@ -192,6 +197,15 @@ function applyProgramUpdate(seed) {
   var db = Local.db;
   var newP = seedProgram(seed);
   if (db.program && db.program.version === newP.version) return false;
+  /* Snapshot every established working weight BEFORE the remap retires
+     anything — a lift that moves to a different day in the new program
+     still carries its weight with it. */
+  var priorWeights = {};
+  db.workouts.forEach(function (w) {
+    w.exercises.forEach(function (x) {
+      if (x.current_weight != null) priorWeights[normName(x.name)] = x.current_weight;
+    });
+  });
   var eidMax = 0;
   db.workouts.forEach(function (w) {
     w.exercises.forEach(function (x) { if (x.id > eidMax) eidMax = x.id; });
@@ -205,6 +219,7 @@ function applyProgramUpdate(seed) {
     } else {
       w.name = sw.name; w.emphasis = sw.emphasis; w.position = wi + 1;
     }
+    w.retired = 0;
     var seen = {};
     sw.exercises.forEach(function (sx, xi) {
       var nm = normName(sx.name);
@@ -216,6 +231,8 @@ function applyProgramUpdate(seed) {
         ex.kind = (sx.kind === "accessory" ? "accessory" : "main");
         ex.template = (sx.template === "power" ? "power" : "standard");
         ex.headline = (sx.headline === true);
+        ex.exact_sets = (sx.exact_sets === true);
+        ex.note = (sx.note == null ? "" : String(sx.note));
         ex.warmup_sets = (sx.warmup_sets == null ? 2 : sx.warmup_sets);
         ex.warmup_pct = (sx.warmup_pct == null ? 60 : sx.warmup_pct);
         ex.warmup_reps = (sx.warmup_reps == null ? 5 : sx.warmup_reps);
@@ -230,6 +247,8 @@ function applyProgramUpdate(seed) {
           kind: (sx.kind === "accessory" ? "accessory" : "main"),
           template: (sx.template === "power" ? "power" : "standard"),
           headline: (sx.headline === true),
+          exact_sets: (sx.exact_sets === true),
+          note: (sx.note == null ? "" : String(sx.note)),
           warmup_sets: (sx.warmup_sets == null ? 2 : sx.warmup_sets),
           warmup_pct: (sx.warmup_pct == null ? 60 : sx.warmup_pct),
           warmup_reps: (sx.warmup_reps == null ? 5 : sx.warmup_reps),
@@ -240,12 +259,30 @@ function applyProgramUpdate(seed) {
     });
     w.exercises.forEach(function (x) { if (!seen[normName(x.name)]) x.retired = 1; });
   });
+  /* Retire whole non-custom workouts that are not part of the new program —
+     their exercises retire with them (session history keeps resolving), and
+     the rotation restarts at the new program's first day. */
+  var seedKeys = {};
+  seed.workouts.forEach(function (sw) { seedKeys[sw.key] = true; });
+  db.workouts.forEach(function (w) {
+    if (!w.custom && !seedKeys[w.key]) {
+      w.retired = 1;
+      w.exercises.forEach(function (x) { x.retired = 1; });
+    }
+  });
+  if (seed.workouts.length) {
+    db.meta = db.meta || {};
+    db.workouts.forEach(function (w) {
+      if (w.key === seed.workouts[0].key) db.meta.next_workout_id = w.id;
+    });
+  }
   /* Backfill: program exercises that arrived with no weight inherit the shared
      weight when the same exercise already lives in another workout. */
   db.workouts.forEach(function (w) {
     w.exercises.forEach(function (x) {
       if (x.current_weight == null && !x.retired) {
-        var sw = sharedWeightFor(x.name);
+        var sw = priorWeights[normName(x.name)];
+        if (sw == null) sw = sharedWeightFor(x.name);
         if (sw != null) x.current_weight = sw;
       }
     });
@@ -310,7 +347,7 @@ var LocalApi = {
       };
     }
     var wname = {};
-    workouts.forEach(function (w) { wname[w.id] = w.name; });
+    db.workouts.forEach(function (w) { wname[w.id] = w.name; });
     var history = db.sessions.filter(function (s) { return !!s.completed_at; })
       .sort(function (a, b) { return b.id - a.id; }).slice(0, 60).map(function (s) {
         var done = 0, vol = 0;
@@ -1105,7 +1142,7 @@ function baselineSets(e) { return exerciseKind(e) === "accessory" ? 2 : 3; }
    day is power-emphasis, where the power work already runs higher set
    counts and plays by its own rules. */
 function isHeadline(e, workout) {
-  if (!workout || e.template === "power" || exerciseKind(e) !== "main") return false;
+  if (!workout || e.exact_sets || e.template === "power" || exerciseKind(e) !== "main") return false;
   var flagged = false, isIt = false;
   workout.exercises.forEach(function (x) {
     if (x.headline === true) { flagged = true; if (x.id === e.id) isIt = true; }
@@ -1124,6 +1161,7 @@ function isHeadline(e, workout) {
    the headline lift gets +1 working set per the research. */
 function workingSets(e, workout, baseline) {
   if (baseline) return baselineSets(e);
+  if (e.exact_sets) return e.target_sets;
   if (e.template === "power") return e.target_sets;
   if (isHeadline(e, workout)) return e.target_sets + 1;
   return e.target_sets;
@@ -1166,7 +1204,7 @@ function workoutLogger() {
     var card = el(
       '<article class="exercise-log"><div class="exercise-head">' +
         '<div class="exercise-index">' + String(i + 1).padStart(2, "0") + "</div>" +
-        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps + (e.template === "power" ? " · power (fresh reps, full rest — not to failure)" : ((!baseline && isHeadline(e, workout)) ? " · headline lift" : "")) + "</p></div>" +
+        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps + (e.template === "power" ? " · power (fresh reps, full rest — not to failure)" : ((!baseline && isHeadline(e, workout)) ? " · headline lift" : "")) + (e.note ? " · " + esc(e.note) : "") + "</p></div>" +
         '<div class="working-weight"><strong>' + esc(formatWeight(e.current_weight)) + "</strong><span>" + esc(e.last_adjustment || "") + "</span></div>" +
       "</div>" +
       '<div class="set-headings"><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div></article>'
@@ -1252,7 +1290,7 @@ function historyView() {
 function exerciseSetting(e, workout) {
   var row = el(
     '<div class="setting-row">' +
-      '<div class="setting-name"><strong>' + esc(e.name) + "</strong><span>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + (isHeadline(e, workout) ? " · headline +1 set" : "") + "</span></div>" +
+      '<div class="setting-name"><strong>' + esc(e.name) + "</strong><span>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + (isHeadline(e, workout) ? " · headline +1 set" : "") + (e.note ? " · " + esc(e.note) : "") + "</span></div>" +
       '<label><span>Working lb</span><input aria-label="' + esc(e.name) + ' working weight" type="number" inputmode="decimal" min="0" step="2.5" placeholder="\u2014"></label>' +
       '<label><span>Add lb</span><input aria-label="' + esc(e.name) + ' progression increment" type="number" inputmode="decimal" min="0" step="2.5"></label>' +
       '<button aria-label="Save ' + esc(e.name) + ' settings">Save</button>' +
@@ -2244,7 +2282,9 @@ function boot() {
     prep = Promise.resolve();
     if (!API_URL) Local.load();
   }
-  prep.then(refresh).then(function () { return maybeApplyProgramUpdate(); }).then(function () {
+  prep.then(refresh).then(function () { return maybeApplyProgramUpdate(); }).then(function (updated) {
+    if (updated) return refresh(); /* program changed under the dashboard — reload it so "next day" and the split reflect the new version on first open */
+  }).then(function () {
     if (!finishOnboardingGate()) { showOnboarding(); return; }
     render();
   }).catch(function () {
