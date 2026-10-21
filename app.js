@@ -325,11 +325,20 @@ function maybeApplyExerciseVideos() {
         var u = String(data.videos[k] || "");
         if (/^https:\/\//.test(u)) byNorm[normName(k)] = u;
       });
+      /* Curated per-exercise notes ride the same file (e.g. station swaps
+         Anthony asks to pin); matched by name and overwritten, like videos. */
+      var notesByNorm = {};
+      if (data.notes) Object.keys(data.notes).forEach(function (k) {
+        var t = String(data.notes[k] || "").trim();
+        if (t) notesByNorm[normName(k)] = t;
+      });
       var changed = false;
       Local.db.workouts.forEach(function (w) {
         w.exercises.forEach(function (x) {
           var url = byNorm[normName(x.name)];
           if (url && x.video !== url) { x.video = url; changed = true; }
+          var note = notesByNorm[normName(x.name)];
+          if (note && x.note !== note) { x.note = note; changed = true; }
         });
       });
       Local.db.meta.videos_version = ver;
