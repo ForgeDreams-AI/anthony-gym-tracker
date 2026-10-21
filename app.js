@@ -125,6 +125,7 @@ var Local = {
           headline: (x.headline === true),
           exact_sets: (x.exact_sets === true),
           note: (x.note == null ? "" : String(x.note)),
+          video: (x.video == null ? "" : String(x.video)),
           warmup_sets: (x.warmup_sets == null ? 2 : x.warmup_sets),
           warmup_pct: (x.warmup_pct == null ? 60 : x.warmup_pct),
           warmup_reps: (x.warmup_reps == null ? 5 : x.warmup_reps),
@@ -233,6 +234,7 @@ function applyProgramUpdate(seed) {
         ex.headline = (sx.headline === true);
         ex.exact_sets = (sx.exact_sets === true);
         ex.note = (sx.note == null ? "" : String(sx.note));
+        if (sx.video != null) ex.video = String(sx.video);
         ex.warmup_sets = (sx.warmup_sets == null ? 2 : sx.warmup_sets);
         ex.warmup_pct = (sx.warmup_pct == null ? 60 : sx.warmup_pct);
         ex.warmup_reps = (sx.warmup_reps == null ? 5 : sx.warmup_reps);
@@ -249,6 +251,7 @@ function applyProgramUpdate(seed) {
           headline: (sx.headline === true),
           exact_sets: (sx.exact_sets === true),
           note: (sx.note == null ? "" : String(sx.note)),
+          video: (sx.video == null ? "" : String(sx.video)),
           warmup_sets: (sx.warmup_sets == null ? 2 : sx.warmup_sets),
           warmup_pct: (sx.warmup_pct == null ? 60 : sx.warmup_pct),
           warmup_reps: (sx.warmup_reps == null ? 5 : sx.warmup_reps),
@@ -303,6 +306,37 @@ function maybeApplyProgramUpdate() {
       if (ok) toast("Program updated to " + seed.program.version + " — your working weights carried over.");
       return ok;
     }).catch(function () { return false; });
+}
+
+/* Form-video links live outside the program seed (exercise-videos.json) so
+   links can be added or fixed without cutting a new program version. Matched
+   to exercises by normalized name across every workout, custom included. */
+function maybeApplyExerciseVideos() {
+  if (API_URL) return Promise.resolve(false);
+  return fetch("exercise-videos.json", { cache: "no-cache" })
+    .then(function (r) { if (!r.ok) throw new Error("videos " + r.status); return r.json(); })
+    .then(function (data) {
+      if (!data || !data.videos) return false;
+      var ver = String(data.version == null ? "" : data.version);
+      Local.db.meta = Local.db.meta || {};
+      if (Local.db.meta.videos_version === ver) return false;
+      var byNorm = {};
+      Object.keys(data.videos).forEach(function (k) {
+        var u = String(data.videos[k] || "");
+        if (/^https:\/\//.test(u)) byNorm[normName(k)] = u;
+      });
+      var changed = false;
+      Local.db.workouts.forEach(function (w) {
+        w.exercises.forEach(function (x) {
+          var url = byNorm[normName(x.name)];
+          if (url && x.video !== url) { x.video = url; changed = true; }
+        });
+      });
+      Local.db.meta.videos_version = ver;
+      Local.save();
+      return changed;
+    })
+    .catch(function () { return false; });
 }
 
 function programLabel() {
@@ -1204,7 +1238,7 @@ function workoutLogger() {
     var card = el(
       '<article class="exercise-log"><div class="exercise-head">' +
         '<div class="exercise-index">' + String(i + 1).padStart(2, "0") + "</div>" +
-        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps + (e.template === "power" ? " · power (fresh reps, full rest — not to failure)" : ((!baseline && isHeadline(e, workout)) ? " · headline lift" : "")) + (e.note ? " · " + esc(e.note) : "") + "</p></div>" +
+        '<div class="exercise-title"><h2>' + esc(e.name) + "</h2><p>" + setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps + (e.template === "power" ? " · power (fresh reps, full rest — not to failure)" : ((!baseline && isHeadline(e, workout)) ? " · headline lift" : "")) + (e.note ? " · " + esc(e.note) : "") + (e.video ? ' · <a class="form-video" href="' + esc(e.video) + '" target="_blank" rel="noopener">▶ Form video</a>' : "") + "</p></div>" +
         '<div class="working-weight"><strong>' + esc(formatWeight(e.current_weight)) + "</strong><span>" + esc(e.last_adjustment || "") + "</span></div>" +
       "</div>" +
       '<div class="set-headings"><span>SET</span><span>WEIGHT</span><span>REPS</span><span></span></div></article>'
@@ -1290,7 +1324,7 @@ function historyView() {
 function exerciseSetting(e, workout) {
   var row = el(
     '<div class="setting-row">' +
-      '<div class="setting-name"><strong>' + esc(e.name) + "</strong><span>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + (isHeadline(e, workout) ? " · headline +1 set" : "") + (e.note ? " · " + esc(e.note) : "") + "</span></div>" +
+      '<div class="setting-name"><strong>' + esc(e.name) + "</strong><span>" + e.target_sets + " × " + e.min_reps + "\u2013" + e.max_reps + (isHeadline(e, workout) ? " · headline +1 set" : "") + (e.note ? " · " + esc(e.note) : "") + (e.video ? ' · <a class="form-video" href="' + esc(e.video) + '" target="_blank" rel="noopener">▶ Form</a>' : "") + "</span></div>" +
       '<label><span>Working lb</span><input aria-label="' + esc(e.name) + ' working weight" type="number" inputmode="decimal" min="0" step="2.5" placeholder="\u2014"></label>' +
       '<label><span>Add lb</span><input aria-label="' + esc(e.name) + ' progression increment" type="number" inputmode="decimal" min="0" step="2.5"></label>' +
       '<button aria-label="Save ' + esc(e.name) + ' settings">Save</button>' +
@@ -2283,7 +2317,9 @@ function boot() {
     if (!API_URL) Local.load();
   }
   prep.then(refresh).then(function () { return maybeApplyProgramUpdate(); }).then(function (updated) {
-    if (updated) return refresh(); /* program changed under the dashboard — reload it so "next day" and the split reflect the new version on first open */
+    return maybeApplyExerciseVideos().then(function (videosChanged) {
+      if (updated || videosChanged) return refresh(); /* program or video links changed under the dashboard — reload it so the first open already reflects them */
+    });
   }).then(function () {
     if (!finishOnboardingGate()) { showOnboarding(); return; }
     render();
