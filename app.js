@@ -366,6 +366,29 @@ function fullWorkoutSnapshot() {
   });
 }
 
+/* Weekday-anchored rotation (Anthony's call, 2026-10-20): Day 1 is Monday,
+   Day 2 Tuesday, ... Day 6 Saturday, Sunday is rest. "Up next" is computed
+   from the calendar, not from a free-running rotation pointer: it is today's
+   workout, or tomorrow's once today's is finished. Sunday shows Monday's
+   Day 1 as up next. Falls back to null when there are no active workouts. */
+function calendarNextWorkout(db) {
+  var ws = Local.sortedWorkouts();
+  if (!ws.length) return null;
+  var now = new Date();
+  var dow = now.getDay(); /* 0 = Sunday ... 6 = Saturday */
+  if (dow === 0) return ws[0];
+  var idx = dow - 1; /* Monday -> slot 0 (Day 1) ... Saturday -> slot 5 (Day 6) */
+  if (idx >= ws.length) return ws[0];
+  var todays = ws[idx];
+  var doneToday = db.sessions.some(function (s) {
+    if (!s.completed_at || s.workout_id !== todays.id) return false;
+    var d = new Date(s.completed_at);
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  });
+  if (!doneToday) return todays;
+  return ws[(idx + 1) % ws.length];
+}
+
 var LocalApi = {
   dashboard: function () {
     var db = Local.db;
@@ -392,7 +415,7 @@ var LocalApi = {
       });
     return Promise.resolve({ ok: true, data: {
       workouts: workouts,
-      next_workout_id: db.meta.next_workout_id || (workouts[0] && workouts[0].id) || 0,
+      next_workout_id: (calendarNextWorkout(db) || {}).id || db.meta.next_workout_id || (workouts[0] && workouts[0].id) || 0,
       active_session: active,
       history: history
     }});
@@ -1017,7 +1040,7 @@ function trainHome() {
     '<div class="next-hero">' +
       '<div class="hero-metal">' + esc((prog ? prog.name : "My split").toUpperCase()) + (prog && prog.version ? " · " + esc(vlabel(prog.version).toUpperCase()) : "") + "</div>" +
       "<h1>" + esc(next.name) + "</h1>" +
-      '<p class="hero-emphasis">' + esc(next.emphasis) + (prog && prog.updated ? ' <span class="hero-updated">· split updated ' + esc(prog.updated) + "</span>" : "") + "</p>" +
+      '<p class="hero-emphasis">' + esc(next.emphasis) + (new Date().getDay() === 0 ? ' <span class="hero-updated">· rest day today — this one is up tomorrow</span>' : (prog && prog.updated ? ' <span class="hero-updated">· split updated ' + esc(prog.updated) + "</span>" : "")) + "</p>" +
       '<div class="hero-stats"><div><strong>' + nextExs.length + "</strong><span>moves</span></div>" +
       "<div><strong>" + totalSets + "</strong><span>" + (baselineNext ? "sets" : "working sets") + "</span></div></div>" +
       '<button class="primary-button primary-button--light">Start ' + esc(next.name) + "</button>" +
