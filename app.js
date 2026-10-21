@@ -1255,6 +1255,12 @@ function workoutLogger() {
     progStrong.textContent = done;
   }
 
+  var focusBar = el('<div class="focus-bar"><button class="focus-open" type="button">⛶ Focus mode — one set at a time</button></div>');
+  focusBar.querySelector("button").addEventListener("click", function () {
+    openFocusMode(active, workout, liveExs, setsFor, baseline, updateProgress);
+  });
+  s.appendChild(focusBar);
+
   var stack = el('<div class="exercise-stack"></div>');
   var seenMain = false; /* first main lift of the day gets full warm-ups; later mains get one feeler */
   liveExs.forEach(function (e, i) {
@@ -1316,6 +1322,142 @@ function workoutLogger() {
   });
   s.appendChild(dock);
   return s;
+}
+
+/* ---------------- focus mode ----------------
+   Full-screen, one-set-at-a-time logging (Anthony's ask, 2026-10-20): tap
+   Focus on the live workout and each set takes over the screen — same
+   weight/reps entry as the normal rows, one big Enter button logs the set
+   through the same logSet path and advances to the next set. Warm-ups get
+   an info step (they are display-only in the normal logger too). Exiting
+   re-renders the normal logger, which reads the same saved sets. */
+function openFocusMode(active, workout, liveExs, setsFor, baseline, updateProgress) {
+  var steps = [];
+  var seenMain = false;
+  liveExs.forEach(function (e, i) {
+    var isPower = e.template === "power";
+    var wSets = (e.warmup_sets == null ? 2 : e.warmup_sets);
+    var wPct = (e.warmup_pct == null ? 60 : e.warmup_pct);
+    var wReps = (e.warmup_reps == null ? 5 : e.warmup_reps);
+    var anyLogged = false;
+    for (var q = 1; q <= setsFor(e); q++) {
+      var sv0 = findSavedSet(active, e.id, q);
+      if (sv0 && (sv0.reps || 0) > 0) anyLogged = true;
+    }
+    if (!baseline && !isPower && exerciseKind(e) === "main" && wSets > 0 &&
+        e.current_weight != null && e.current_weight > 0 && !anyLogged) {
+      var nW = seenMain ? 1 : wSets;
+      var wLb = Math.floor((e.current_weight * wPct / 100) / 2.5) * 2.5;
+      steps.push({ type: "warmup", e: e, idx: i,
+        text: nW + " warm-up" + (nW > 1 ? "s" : "") + " × " + wReps + " @ " + wPct + "% — " + wLb + " lb, easy" });
+    }
+    if (exerciseKind(e) === "main") seenMain = true;
+    for (var n = 1; n <= setsFor(e); n++) steps.push({ type: "set", e: e, idx: i, n: n });
+  });
+  var totalSets = steps.filter(function (st) { return st.type === "set"; }).length;
+
+  /* Start at the first unlogged set; pull in its warm-up step if it has one. */
+  var pos = steps.length;
+  for (var k = 0; k < steps.length; k++) {
+    var stk = steps[k];
+    if (stk.type !== "set") continue;
+    var svk = findSavedSet(active, stk.e.id, stk.n);
+    if (!(svk && (svk.reps || 0) > 0)) { pos = k; break; }
+  }
+  if (pos > 0 && pos < steps.length && steps[pos - 1].type === "warmup" && steps[pos - 1].e.id === steps[pos].e.id) pos -= 1;
+
+  var overlay = el('<div class="focus-overlay" role="dialog" aria-modal="true"></div>');
+  document.body.appendChild(overlay);
+  function close() { overlay.remove(); render(); }
+
+  function setsDoneBefore(p) {
+    var c = 0;
+    for (var j = 0; j < p && j < steps.length; j++) if (steps[j].type === "set") c++;
+    return c;
+  }
+
+  function show() {
+    if (pos >= steps.length) {
+      overlay.innerHTML =
+        '<div class="focus-top"><span>ALL SETS LOGGED</span><button class="focus-exit" type="button">✕ Exit</button></div>' +
+        '<div class="focus-body"><h1 class="focus-name">That\u2019s every set.</h1>' +
+        '<p class="focus-sub">Head back and hit Finish workout to close it out.</p>' +
+        '<button class="focus-enter" type="button">Back to workout</button></div>';
+      overlay.querySelector(".focus-exit").addEventListener("click", close);
+      overlay.querySelector(".focus-enter").addEventListener("click", close);
+      return;
+    }
+    var st = steps[pos];
+    var e = st.e;
+    var target = setsFor(e) + " × " + e.min_reps + "\u2013" + e.max_reps +
+      (e.template === "power" ? " · power" : "") + (e.note ? " · " + esc(e.note) : "") +
+      (e.video ? ' · <a class="form-video" href="' + esc(e.video) + '" target="_blank" rel="noopener">▶ Form video</a>' : "");
+    var topHtml = '<div class="focus-top"><span>EXERCISE ' + (st.idx + 1) + " OF " + liveExs.length +
+      (st.type === "set" ? " · SET " + st.n + " OF " + setsFor(e) : " · WARM-UP") +
+      '</span><button class="focus-exit" type="button">✕ Exit</button></div>';
+    if (st.type === "warmup") {
+      overlay.innerHTML = topHtml +
+        '<div class="focus-body"><h1 class="focus-name">' + esc(e.name) + '</h1>' +
+        '<p class="focus-sub">' + target + '</p>' +
+        '<div class="focus-warmup">' + esc(st.text) + '</div>' +
+        '<button class="focus-enter" type="button">Start working sets →</button></div>';
+      overlay.querySelector(".focus-exit").addEventListener("click", close);
+      overlay.querySelector(".focus-enter").addEventListener("click", function () { pos++; show(); });
+      return;
+    }
+    var saved = findSavedSet(active, e.id, st.n);
+    var loadless = e.increment === 0 && e.current_weight == null;
+    var duration = e.increment === 0 && e.max_reps >= 20; /* timed holds (e.g. Copenhagen) log seconds in the reps field */
+    var wVal = saved && saved.weight != null ? String(saved.weight)
+      : (e.current_weight == null ? "" : String(e.current_weight));
+    var rVal = saved && saved.reps != null ? String(saved.reps) : "";
+    var isLast = pos === steps.length - 1;
+    overlay.innerHTML = topHtml +
+      '<div class="focus-body"><h1 class="focus-name">' + esc(e.name) + '</h1>' +
+      '<p class="focus-sub">' + target + '</p>' +
+      '<p class="focus-progress">Set ' + (setsDoneBefore(pos) + 1) + " of " + totalSets + ' overall</p>' +
+      '<div class="focus-fields">' +
+        (loadless
+          ? '<div class="focus-bw"><strong>BW</strong><span>bodyweight</span></div>'
+          : '<label class="focus-field"><span>WEIGHT · LB</span><input id="focus-weight" inputmode="decimal" type="number" min="0" step="2.5" placeholder="\u2014"></label>') +
+        '<label class="focus-field"><span>' + (duration ? "HOLD · SECONDS" : "REPS") + '</span><input id="focus-reps" inputmode="numeric" type="number" min="0" max="200" placeholder="' + e.min_reps + "\u2013" + e.max_reps + '"></label>' +
+      '</div>' +
+      '<button class="focus-enter" type="button">' + (isLast ? "Log final set ✓" : "Log set →") + '</button>' +
+      '<button class="focus-skip" type="button">Skip this set</button></div>';
+    var wInput = overlay.querySelector("#focus-weight");
+    var rInput = overlay.querySelector("#focus-reps");
+    if (wInput) wInput.value = wVal;
+    rInput.value = rVal;
+    overlay.querySelector(".focus-exit").addEventListener("click", close);
+    overlay.querySelector(".focus-skip").addEventListener("click", function () { pos++; show(); });
+    var enterBtn = overlay.querySelector(".focus-enter");
+    function saveAndNext() {
+      var rv = rInput.value;
+      if (rv === "" || Number(rv) <= 0) { rInput.focus(); return; }
+      var wv = wInput ? wInput.value : "";
+      enterBtn.disabled = true;
+      enterBtn.textContent = "Saving\u2026";
+      api("logSet", { session_id: active.id, exercise_id: e.id, set_number: st.n,
+        weight: wv === "" ? "" : Number(wv), reps: Number(rv) })
+        .then(function () {
+          upsertLocalSet(active, e.id, st.n, wv === "" ? null : Number(wv), Number(rv));
+          updateProgress();
+          pos++;
+          show();
+        })
+        .catch(function () {
+          enterBtn.disabled = false;
+          enterBtn.textContent = isLast ? "Log final set ✓" : "Log set →";
+          toast("Couldn\u2019t save that set — try again.");
+        });
+    }
+    enterBtn.addEventListener("click", saveAndNext);
+    [wInput, rInput].forEach(function (inp) {
+      if (inp) inp.addEventListener("keydown", function (ev) { if (ev.key === "Enter") saveAndNext(); });
+    });
+    (wInput || rInput).focus();
+  }
+  show();
 }
 
 /* ---------------- History ---------------- */
